@@ -473,11 +473,11 @@ export function streakBadge() {
     if (!streakData || streakData.streak === 0) return "";
     const n = streakData.streak;
     const pr = bestStreakForAccount(streakData.accountId);
-    const prTip = pr > 0 ? ` — all-time PR ${pr}` : "";
+    const prTip = pr > 0 ? `. All-time best: ${pr} wins.` : "";
     if (n > 0) {
-        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak this session${prTip} — click to see records" style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
+        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak this session${prTip} Click to see records." style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
     }
-    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak this session${prTip} — click to see records" style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
+    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak this session${prTip} Click to see records." style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
 }
 
 
@@ -514,7 +514,7 @@ async function fetchStreakRecords() {
 
 function renderStreakRecordsRows(rows, myAccountId) {
     if (!rows.length) {
-        return `<div style="color:#9aa5ad;padding:12px 0;text-align:center;">No records yet — end a win streak to seed the board.</div>`;
+        return `<div style="color:#9aa5ad;padding:12px 0;text-align:center;">No records yet. End a win streak to seed the board.</div>`;
     }
     const items = rows.slice(0, 50).map((r, i) => {
         const rank = i + 1;

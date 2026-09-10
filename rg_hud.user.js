@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.6
+// @version      26.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2328,11 +2328,11 @@ function streakBadge() {
     if (!streakData || streakData.streak === 0) return "";
     const n = streakData.streak;
     const pr = bestStreakForAccount(streakData.accountId);
-    const prTip = pr > 0 ? ` — all-time PR ${pr}` : "";
+    const prTip = pr > 0 ? `. All-time best: ${pr} wins.` : "";
     if (n > 0) {
-        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak this session${prTip} — click to see records" style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
+        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak this session${prTip} Click to see records." style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
     }
-    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak this session${prTip} — click to see records" style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
+    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak this session${prTip} Click to see records." style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
 }
 
 
@@ -2369,7 +2369,7 @@ async function fetchStreakRecords() {
 
 function renderStreakRecordsRows(rows, myAccountId) {
     if (!rows.length) {
-        return `<div style="color:#9aa5ad;padding:12px 0;text-align:center;">No records yet — end a win streak to seed the board.</div>`;
+        return `<div style="color:#9aa5ad;padding:12px 0;text-align:center;">No records yet. End a win streak to seed the board.</div>`;
     }
     const items = rows.slice(0, 50).map((r, i) => {
         const rank = i + 1;
@@ -13988,7 +13988,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
