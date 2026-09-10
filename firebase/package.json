@@ -25,6 +25,7 @@
     "verify:baseline": "node scripts/verify-baseline.mjs",
     "build:leaderboard-cache": "node scripts/build-leaderboard-cache.mjs",
     "build:leaderboard-json": "node scripts/build-leaderboard-cache.mjs --emit-json",
+    "build:streak-records-cache": "node scripts/build-streak-records-cache.mjs",
     "build:read-stats-snapshot": "node scripts/build-read-stats-snapshot.mjs",
     "start:cloud-run": "node scripts/cloud-run-server.mjs",
     "publish:latest-version": "node scripts/publish-latest-version.mjs",

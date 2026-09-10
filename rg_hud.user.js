@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.5
+// @version      26.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2185,6 +2185,8 @@ function updateStreak(data) {
 
     if (matchDiff <= 0) return;
 
+    const priorStreak = Number(streakData.streak) || 0;
+
     // no way to know interleaving. pure win/loss block extends the streak,
     // mixed collapses to net sign, magnitude 1
     const losses = matchDiff - winDiff;
@@ -2194,6 +2196,12 @@ function updateStreak(data) {
         streakData.streak = streakData.streak < 0 ? streakData.streak - losses : -losses;
     } else {
         streakData.streak = winDiff >= losses ? 1 : -1;
+    }
+
+    // Positive streak just broke — flush the just-ended run as a PR
+    // candidate. Only fires once per streak, no per-win writes.
+    if (priorStreak > 0 && streakData.streak <= 0) {
+        maybeWriteStreakPR(priorStreak, data.Id);
     }
 
     streakData.lastWins = totalWins;
@@ -2208,13 +2216,204 @@ function updateStreak(data) {
 }
 
 
+// ---------- All-time streak record (persisted to player_streaks/{uid}) ----------
+//
+// Local cache lives in localStorage so we never re-read the server just
+// to decide whether the current session broke a PR. The server-side
+// aggregate (leaderboard_cache/streak_records) is built by a scheduled
+// script — clients only write their own doc, and only when a positive
+// streak ends above their prior best.
+let bestWinStreakLocal = (() => {
+    try { return JSON.parse(localStorage.getItem("rgHudBestStreak") ?? "null"); }
+    catch { return null; }
+})();
+let bestStreakServerLoaded = false;
+let bestStreakLoadInflight = null;
+
+function bestStreakForAccount(accountId) {
+    if (!bestWinStreakLocal || bestWinStreakLocal.accountId !== accountId) return 0;
+    return Number(bestWinStreakLocal.best) || 0;
+}
+
+async function loadBestStreakFromServer(accountId) {
+    if (bestStreakServerLoaded) return;
+    if (bestStreakLoadInflight) return bestStreakLoadInflight;
+    if (!firebaseAuthUid || !firestoreReady) return;
+    const fb = firestoreReady;
+    bestStreakLoadInflight = (async () => {
+        try {
+            const ref = fb.doc(fb.db, "player_streaks", firebaseAuthUid);
+            const snap = await fb.getDoc(ref);
+            if (snap.exists()) {
+                const d = snap.data() || {};
+                const serverBest = Number(d.bestWinStreak) || 0;
+                const localBest = Number(bestWinStreakLocal?.best) || 0;
+                // Server wins on higher value (another device may have set a
+                // bigger PR); local wins otherwise so a stale server read
+                // doesn't clobber an in-flight write.
+                if (serverBest >= localBest) {
+                    bestWinStreakLocal = {
+                        accountId,
+                        best: serverBest,
+                        at: Number(d.bestAt) || 0,
+                        displayName: d.displayName || "",
+                    };
+                    try { localStorage.setItem("rgHudBestStreak", JSON.stringify(bestWinStreakLocal)); }
+                    catch {}
+                }
+            }
+            bestStreakServerLoaded = true;
+        } catch (e) {
+            pushError(e, "loadBestStreak");
+        } finally {
+            bestStreakLoadInflight = null;
+        }
+    })();
+    return bestStreakLoadInflight;
+}
+
+function resolveMyDisplayName(accountId) {
+    try {
+        const cached = cachedDisplayNames.get(accountId);
+        if (cached) return cached;
+    } catch {}
+    try {
+        const stored = readStoredDisplayName(atlasTmStorage(), accountId);
+        if (stored) return stored;
+    } catch {}
+    try {
+        const nick = lastKnownPlayerData?.Nickname;
+        if (nick) return cleanName(nick);
+    } catch {}
+    return "";
+}
+
+function maybeWriteStreakPR(streakLength, accountId) {
+    const run = Math.trunc(Number(streakLength) || 0);
+    if (run <= 0) return;
+    if (!firebaseAuthUid || !firestoreReady) return;
+
+    // Fire-and-forget so we don't block the HUD render path.
+    (async () => {
+        try {
+            await loadBestStreakFromServer(accountId);
+            const prior = bestStreakForAccount(accountId);
+            if (run <= prior) return;
+
+            const fb = firestoreReady;
+            const ref = fb.doc(fb.db, "player_streaks", firebaseAuthUid);
+            const displayName = resolveMyDisplayName(accountId);
+            const now = Date.now();
+            const payload = {
+                accountId,
+                displayName,
+                bestWinStreak: run,
+                bestAt: now,
+                sourceUserId: firebaseAuthUid,
+            };
+            const wrote = await atlasSetDoc(fb, "player_streaks", ref, payload, { merge: true });
+            if (wrote) {
+                bestWinStreakLocal = { accountId, best: run, at: now, displayName };
+                try { localStorage.setItem("rgHudBestStreak", JSON.stringify(bestWinStreakLocal)); }
+                catch {}
+            }
+        } catch (e) {
+            pushError(e, "streakPR");
+        }
+    })();
+}
+
+
 function streakBadge() {
     if (!streakData || streakData.streak === 0) return "";
     const n = streakData.streak;
+    const pr = bestStreakForAccount(streakData.accountId);
+    const prTip = pr > 0 ? ` — all-time PR ${pr}` : "";
     if (n > 0) {
-        return `<span class="rgHasTip rgNoUnderline" data-tip="${n}-win streak this session" style="color:#ff7a00;font-weight:bold;">🔥x${n}</span>`;
+        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak this session${prTip} — click to see records" style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
     }
-    return `<span class="rgHasTip rgNoUnderline" data-tip="${-n}-loss streak this session" style="color:#7ec8ff;font-weight:bold;">❄️x${-n}</span>`;
+    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak this session${prTip} — click to see records" style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
+}
+
+
+// ---------- Streak records modal ----------
+//
+// One cache-doc read per open (leaderboard_cache/streak_records). We
+// keep a short-lived in-memory copy so repeated opens within the same
+// session don't re-fetch.
+const STREAK_RECORDS_CACHE_TTL_MS = 5 * 60 * 1000;
+let _streakRecordsCache = null; // { at, rows, updatedAt }
+
+async function fetchStreakRecords() {
+    const now = Date.now();
+    if (_streakRecordsCache && (now - _streakRecordsCache.at) < STREAK_RECORDS_CACHE_TTL_MS) {
+        return _streakRecordsCache;
+    }
+    if (!firestoreReady) throw new Error("Firestore not ready");
+    const fb = firestoreReady;
+    const ref = fb.doc(fb.db, "leaderboard_cache", "streak_records");
+    const snap = await fb.getDoc(ref);
+    if (!snap.exists()) {
+        _streakRecordsCache = { at: now, rows: [], updatedAt: 0 };
+        return _streakRecordsCache;
+    }
+    const d = snap.data() || {};
+    const rows = Array.isArray(d.rows) ? d.rows : [];
+    _streakRecordsCache = {
+        at: now,
+        rows,
+        updatedAt: Number(d.updatedAt) || 0,
+    };
+    return _streakRecordsCache;
+}
+
+function renderStreakRecordsRows(rows, myAccountId) {
+    if (!rows.length) {
+        return `<div style="color:#9aa5ad;padding:12px 0;text-align:center;">No records yet — end a win streak to seed the board.</div>`;
+    }
+    const items = rows.slice(0, 50).map((r, i) => {
+        const rank = i + 1;
+        const streak = Math.trunc(Number(r.bestWinStreak) || 0);
+        const name = String(r.displayName || "Unknown").slice(0, 32);
+        const when = r.bestAt ? new Date(Number(r.bestAt)).toLocaleDateString() : "";
+        const mine = myAccountId && r.accountId === myAccountId;
+        const rankColor = rank === 1 ? "#ffd700" : rank <= 3 ? "#c77dff" : rank <= 10 ? "#00d4ff" : "#9aa5ad";
+        const rowBg = mine ? "background:rgba(255,122,0,0.12);" : "";
+        return `<div style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;${rowBg}">
+            <span style="color:${rankColor};font-weight:bold;min-width:24px;">#${rank}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${mine ? " <span style=\"color:#ff7a00;font-size:10px;\">(you)</span>" : ""}</span>
+            <span style="color:#ff7a00;font-weight:bold;">🔥 ${streak}</span>
+            <span style="color:#9aa5ad;font-size:10px;min-width:64px;text-align:right;">${when}</span>
+        </div>`;
+    }).join("");
+    return items;
+}
+
+async function openStreakRecordsModal() {
+    const modal = document.getElementById("rgStreakRecords");
+    const body = document.getElementById("rgStreakRecordsBody");
+    const foot = document.getElementById("rgStreakRecordsFoot");
+    if (!modal || !body) return;
+    modal.style.display = "flex";
+    body.innerHTML = "Loading…";
+    if (foot) foot.textContent = "";
+    try {
+        const result = await fetchStreakRecords();
+        const myAccountId = lastKnownPlayerData?.Id || null;
+        body.innerHTML = renderStreakRecordsRows(result.rows, myAccountId);
+        if (foot) {
+            const stamp = result.updatedAt ? new Date(result.updatedAt).toLocaleString() : "unknown";
+            foot.textContent = `updated ${stamp}`;
+        }
+    } catch (e) {
+        pushError(e, "openStreakRecordsModal");
+        body.innerHTML = `<div style="color:#ff6b6b;">Couldn't load records — try again in a bit.</div>`;
+    }
+}
+
+function closeStreakRecordsModal() {
+    const modal = document.getElementById("rgStreakRecords");
+    if (modal) modal.style.display = "none";
 }
 
 
@@ -2245,7 +2444,12 @@ function captureSessionStart(data) {
     currentMomentumState = "neutral";
     resetAccountRankState();
 
-    // reset streak, don't count pre-session matches
+    // reset streak, don't count pre-session matches. Flush any in-flight
+    // positive run as a PR candidate first — session idle-out shouldn't
+    // silently drop a running win streak.
+    if (streakData && streakData.accountId === data.Id && Number(streakData.streak) > 0) {
+        maybeWriteStreakPR(Number(streakData.streak), data.Id);
+    }
     const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
     const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
     const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
@@ -2702,6 +2906,22 @@ function createHUD() {
             </div>
         </div>
         <div id="rgToast" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div id="rgStreakRecords" role="dialog" aria-modal="true" aria-labelledby="rgStreakRecordsTitle" style="
+            position:absolute; inset:0;
+            background: rgba(10,14,18,0.97);
+            border-radius: 10px;
+            display:none; flex-direction:column;
+            padding: 12px 12px 10px;
+            z-index: 12;
+            overflow: hidden;
+        ">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                <div id="rgStreakRecordsTitle" style="font-size:13px;font-weight:bold;color:#ff7a00;flex:1;">🔥 All-time Win-Streak Records</div>
+                <button id="rgStreakRecordsClose" class="rgBtn" style="padding:2px 8px;">Close</button>
+            </div>
+            <div id="rgStreakRecordsBody" style="flex:1;overflow-y:auto;font-size:12px;color:#d7f3ff;">Loading…</div>
+            <div id="rgStreakRecordsFoot" style="font-size:10px;color:#9aa5ad;margin-top:6px;text-align:right;"></div>
+        </div>
     `;
 
     document.body.appendChild(hud);
@@ -2748,7 +2968,14 @@ function createHUD() {
     hud.addEventListener("click", (e) => {
         const btn = e.target.closest("button");
         if (btn && e.detail !== 0) btn.blur();
+        const streakBadgeEl = e.target.closest(".rgStreakBadge");
+        if (streakBadgeEl) {
+            e.preventDefault();
+            openStreakRecordsModal();
+        }
     });
+    const streakCloseBtn = document.getElementById("rgStreakRecordsClose");
+    if (streakCloseBtn) streakCloseBtn.onclick = () => closeStreakRecordsModal();
 
     document.getElementById("rgMinimize").onclick = () => manualToggle();
     document.getElementById("rgSub").onclick = () => {
@@ -13761,7 +13988,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
