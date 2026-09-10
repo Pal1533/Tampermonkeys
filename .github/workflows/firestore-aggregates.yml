@@ -1,17 +1,19 @@
 name: Firestore aggregates
 
 on:
+  # Scheduled runs come from cron-job.org hitting workflow_dispatch —
+  # GitHub's free-tier scheduler silently deprioritizes frequent cron
+  # on public repos (same reason publish-leaderboard-json.yml uses the
+  # same pattern). The daily entry below is a defensive fallback so a
+  # cron-job.org outage doesn't strand the aggregates.
   schedule:
-    # Every 30 min so ATLAS rank badges and popup caches don't lag more than
-    # a rating period behind live data. Aggregate builder uses CDC-friendly
-    # queries so most runs read little.
-    - cron: "*/30 * * * *"
+    - cron: "17 11 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
         description: Plan writes without committing (true/false)
         required: false
-        default: "true"
+        default: "false"
       project:
         description: Firebase project ID
         required: false
