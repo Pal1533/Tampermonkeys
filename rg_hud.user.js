@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.7
+// @version      26.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -13113,11 +13113,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const codeApplied = _prefix() + stolen;
               const r = await applyNicknameStable(codeApplied, stolen);
               if (r.ok) {
+                // Reveal first so a downstream render() throw can't swallow the
+                // whole point of the feature via the outer try/catch.
+                try { showImposterReveal(raw); } catch (revealErr) { dbg('imposter reveal failed: ' + getErrMsg(revealErr)); }
                 setRawSnapshot(stolen);
                 _lastRawNickname = stolen;
                 recordRecentApply(codeApplied, raw);
-                render(panel);
-                showImposterReveal(raw);
+                try { render(panel); } catch (renderErr) { dbg('post-steal render failed: ' + getErrMsg(renderErr)); }
                 return;
               }
               b.textContent = '✗';
@@ -13988,7 +13990,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

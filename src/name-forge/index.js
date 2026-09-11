@@ -2946,11 +2946,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const codeApplied = _prefix() + stolen;
               const r = await applyNicknameStable(codeApplied, stolen);
               if (r.ok) {
+                // Reveal first so a downstream render() throw can't swallow the
+                // whole point of the feature via the outer try/catch.
+                try { showImposterReveal(raw); } catch (revealErr) { dbg('imposter reveal failed: ' + getErrMsg(revealErr)); }
                 setRawSnapshot(stolen);
                 _lastRawNickname = stolen;
                 recordRecentApply(codeApplied, raw);
-                render(panel);
-                showImposterReveal(raw);
+                try { render(panel); } catch (renderErr) { dbg('post-steal render failed: ' + getErrMsg(renderErr)); }
                 return;
               }
               b.textContent = '✗';
