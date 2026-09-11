@@ -343,10 +343,15 @@ export function updateStreak(data) {
         streakData.streak = winDiff >= losses ? 1 : -1;
     }
 
-    // Positive streak just broke — flush the just-ended run as a PR
-    // candidate. Only fires once per streak, no per-win writes.
+    // Persist the run to player_streaks whenever it is (a) still climbing
+    // above the prior PR, or (b) just broke. Mid-run writes protect against
+    // tab crashes, lockouts, and closed browsers eating an in-flight PR;
+    // maybeWriteStreakPR itself no-ops when the run isn't beating the prior
+    // best, so wins that don't advance the PR cost nothing.
     if (priorStreak > 0 && streakData.streak <= 0) {
         maybeWriteStreakPR(priorStreak, data.Id);
+    } else if (streakData.streak > 0) {
+        maybeWriteStreakPR(streakData.streak, data.Id);
     }
 
     streakData.lastWins = totalWins;

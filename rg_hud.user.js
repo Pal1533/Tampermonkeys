@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.8
+// @version      26.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2198,10 +2198,15 @@ function updateStreak(data) {
         streakData.streak = winDiff >= losses ? 1 : -1;
     }
 
-    // Positive streak just broke — flush the just-ended run as a PR
-    // candidate. Only fires once per streak, no per-win writes.
+    // Persist the run to player_streaks whenever it is (a) still climbing
+    // above the prior PR, or (b) just broke. Mid-run writes protect against
+    // tab crashes, lockouts, and closed browsers eating an in-flight PR;
+    // maybeWriteStreakPR itself no-ops when the run isn't beating the prior
+    // best, so wins that don't advance the PR cost nothing.
     if (priorStreak > 0 && streakData.streak <= 0) {
         maybeWriteStreakPR(priorStreak, data.Id);
+    } else if (streakData.streak > 0) {
+        maybeWriteStreakPR(streakData.streak, data.Id);
     }
 
     streakData.lastWins = totalWins;
@@ -13990,7 +13995,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
