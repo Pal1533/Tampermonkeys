@@ -27,6 +27,7 @@ const BUNDLE_MODULES = [
   "src/firebase/deny.js",
   "src/firebase/budget.js",
   "src/matches/glicko.js",
+  "src/matches/win-limits.js",
   "src/hud/momentum.js",
   "src/clans/members.js",
   "src/clans/directory.js",

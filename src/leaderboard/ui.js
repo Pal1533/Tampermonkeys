@@ -1101,6 +1101,16 @@ export async function submitToLeaderboardInner(data) {
         return;
     }
 
+    // Check the write caps before we spend any Firestore budget.
+    const winLimitsModes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+    const winLimitsTotalWins = winLimitsModes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
+    const winLimits = evaluateWinLimits(data.Id, winLimitsTotalWins);
+    if (winLimits?.reviewFlagged) {
+        showError(`Under review (${winLimits.flaggedReason || "cap exceeded"}). Writes paused.`);
+        dbg(`submitToLeaderboardInner blocked: ${winLimits.flaggedReason}`);
+        return;
+    }
+
     const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, firebaseAuthUid);
 
     // ask for display name once per player unless Rename forces it.
@@ -1115,8 +1125,16 @@ export async function submitToLeaderboardInner(data) {
     if (!existingDisplayName || forceRenamePrompt) {
         try {
             const existing = await fb.getDoc(docRef);
-            if (existing.exists() && existing.data().displayName) {
-                existingDisplayName = existing.data().displayName;
+            if (existing.exists()) {
+                const existingData = existing.data() || {};
+                if (existingData.displayName) existingDisplayName = existingData.displayName;
+                // Sync local flag with server so admin clears propagate.
+                reconcileFlagFromServer(data.Id, existingData.reviewFlagged === true);
+                if (existingData.reviewFlagged === true) {
+                    showError("Under review by admin. Writes paused until cleared.");
+                    dbg("submitToLeaderboardInner blocked: server-side review flag");
+                    return;
+                }
             }
         } catch (e) {
             dbg("submitToLeaderboardInner: prior displayName read failed");
@@ -1195,6 +1213,9 @@ export async function submitToLeaderboardInner(data) {
         // Last 5 match snapshots for cheap "recent form" reads. Full
         // per-match history lives in match_snapshots/{authUid}_{matchId}.
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
+        dailyWins: winLimits?.dailyWins || null,
+        hourlyWins: winLimits?.hourlyWins || null,
+        reviewFlagged: false,
         lastWriteAt: fb.serverTimestamp(),
     };
 
@@ -1263,6 +1284,10 @@ export async function syncToRealLeaderboard(fb, data, displayName) {
   try {
     if (!firebaseAuthUid) {
         dbg("syncToRealLeaderboard skipped: firebaseAuthUid not ready");
+        return;
+    }
+    if (isFlaggedLocally(data.Id)) {
+        dbg("syncToRealLeaderboard blocked: account under review");
         return;
     }
     const sourceUserId = firebaseAuthUid;

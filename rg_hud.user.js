@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.9
+// @version      27.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -619,6 +619,122 @@ function outcomeFromDelta(beforeStats, afterStats) {
     if (afterStats.loses > beforeStats.loses) return "L";
     if (afterStats.matches > beforeStats.matches) return "T";
     return null;
+}
+
+// src/matches/win-limits.js
+// Anti-cheat write caps. Trip either bucket and writes freeze locally
+// until an admin clears the flag server-side.
+
+const DAILY_WIN_CAP = 120;
+const HOURLY_WIN_CAP = 50;
+const STORAGE_KEY = "rgHudWinLimits_v1";
+
+function utcDateString(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+function utcHourString(now) {
+  return new Date(now).toISOString().slice(0, 13);
+}
+
+function readStore() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {}; }
+  catch { return {}; }
+}
+function writeStore(value) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch {}
+}
+
+function emptyTracker(totalWinsNow) {
+  return {
+    utcDate: null,
+    utcHour: null,
+    dailyBaseline: totalWinsNow,
+    hourlyBaseline: totalWinsNow,
+    lastTotalWins: totalWinsNow,
+    flagged: false,
+    flaggedAt: null,
+    flaggedReason: null,
+  };
+}
+
+function evaluateWinLimits(accountId, totalWinsNow, now = Date.now()) {
+  if (!accountId || !Number.isFinite(totalWinsNow)) return null;
+  const store = readStore();
+  const prev = store[accountId] ? { ...store[accountId] } : emptyTracker(totalWinsNow);
+
+  const utcDate = utcDateString(now);
+  const utcHour = utcHourString(now);
+
+  if (prev.utcDate !== utcDate) {
+    prev.dailyBaseline = totalWinsNow;
+    prev.utcDate = utcDate;
+  }
+  if (prev.utcHour !== utcHour) {
+    prev.hourlyBaseline = totalWinsNow;
+    prev.utcHour = utcHour;
+  }
+
+  // Account switch or wipe: wins can't go down within one lifetime, so
+  // reseed baselines instead of letting the deltas go negative.
+  if (totalWinsNow < prev.lastTotalWins) {
+    prev.dailyBaseline = totalWinsNow;
+    prev.hourlyBaseline = totalWinsNow;
+  }
+
+  const dailyCount = Math.max(0, totalWinsNow - prev.dailyBaseline);
+  const hourlyCount = Math.max(0, totalWinsNow - prev.hourlyBaseline);
+
+  if (!prev.flagged) {
+    if (dailyCount > DAILY_WIN_CAP) {
+      prev.flagged = true;
+      prev.flaggedAt = now;
+      prev.flaggedReason = `>${DAILY_WIN_CAP} wins in one UTC day`;
+    } else if (hourlyCount > HOURLY_WIN_CAP) {
+      prev.flagged = true;
+      prev.flaggedAt = now;
+      prev.flaggedReason = `>${HOURLY_WIN_CAP} wins in one UTC hour`;
+    }
+  }
+
+  prev.lastTotalWins = totalWinsNow;
+  store[accountId] = prev;
+  writeStore(store);
+
+  return {
+    dailyWins: { utcDate, count: dailyCount },
+    hourlyWins: { utcHour, count: hourlyCount },
+    reviewFlagged: !!prev.flagged,
+    flaggedReason: prev.flaggedReason || null,
+    flaggedAt: prev.flaggedAt || null,
+  };
+}
+
+function isFlaggedLocally(accountId) {
+  if (!accountId) return false;
+  return !!(readStore()[accountId]?.flagged);
+}
+
+function reconcileFlagFromServer(accountId, serverFlagged) {
+  if (!accountId) return;
+  const store = readStore();
+  const prev = store[accountId];
+  if (!prev) {
+    if (!serverFlagged) return;
+    store[accountId] = { ...emptyTracker(0), flagged: true, flaggedAt: Date.now(), flaggedReason: "server-side review flag" };
+    writeStore(store);
+    return;
+  }
+  if (prev.flagged === !!serverFlagged) return;
+  prev.flagged = !!serverFlagged;
+  if (!serverFlagged) {
+    prev.flaggedAt = null;
+    prev.flaggedReason = null;
+  } else if (!prev.flaggedAt) {
+    prev.flaggedAt = Date.now();
+    prev.flaggedReason = "server-side review flag";
+  }
+  store[accountId] = prev;
+  writeStore(store);
 }
 
 // src/hud/momentum.js
@@ -5675,6 +5791,16 @@ async function submitToLeaderboardInner(data) {
         return;
     }
 
+    // Check the write caps before we spend any Firestore budget.
+    const winLimitsModes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+    const winLimitsTotalWins = winLimitsModes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
+    const winLimits = evaluateWinLimits(data.Id, winLimitsTotalWins);
+    if (winLimits?.reviewFlagged) {
+        showError(`Under review (${winLimits.flaggedReason || "cap exceeded"}). Writes paused.`);
+        dbg(`submitToLeaderboardInner blocked: ${winLimits.flaggedReason}`);
+        return;
+    }
+
     const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, firebaseAuthUid);
 
     // ask for display name once per player unless Rename forces it.
@@ -5689,8 +5815,16 @@ async function submitToLeaderboardInner(data) {
     if (!existingDisplayName || forceRenamePrompt) {
         try {
             const existing = await fb.getDoc(docRef);
-            if (existing.exists() && existing.data().displayName) {
-                existingDisplayName = existing.data().displayName;
+            if (existing.exists()) {
+                const existingData = existing.data() || {};
+                if (existingData.displayName) existingDisplayName = existingData.displayName;
+                // Sync local flag with server so admin clears propagate.
+                reconcileFlagFromServer(data.Id, existingData.reviewFlagged === true);
+                if (existingData.reviewFlagged === true) {
+                    showError("Under review by admin. Writes paused until cleared.");
+                    dbg("submitToLeaderboardInner blocked: server-side review flag");
+                    return;
+                }
             }
         } catch (e) {
             dbg("submitToLeaderboardInner: prior displayName read failed");
@@ -5769,6 +5903,9 @@ async function submitToLeaderboardInner(data) {
         // Last 5 match snapshots for cheap "recent form" reads. Full
         // per-match history lives in match_snapshots/{authUid}_{matchId}.
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
+        dailyWins: winLimits?.dailyWins || null,
+        hourlyWins: winLimits?.hourlyWins || null,
+        reviewFlagged: false,
         lastWriteAt: fb.serverTimestamp(),
     };
 
@@ -5837,6 +5974,10 @@ async function syncToRealLeaderboard(fb, data, displayName) {
   try {
     if (!firebaseAuthUid) {
         dbg("syncToRealLeaderboard skipped: firebaseAuthUid not ready");
+        return;
+    }
+    if (isFlaggedLocally(data.Id)) {
+        dbg("syncToRealLeaderboard blocked: account under review");
         return;
     }
     const sourceUserId = firebaseAuthUid;
@@ -13995,7 +14136,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
