@@ -1101,11 +1101,15 @@ export async function submitToLeaderboardInner(data) {
         return;
     }
 
-    // Check the write caps before we spend any Firestore budget.
+    // Check the write caps before we spend any Firestore budget. If the
+    // cap was already tripped on a prior tick, block. If this tick is the
+    // one that trips it, fall through so the server-side doc gets the
+    // reviewFlagged=true marker admins can see and clear.
     const winLimitsModes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
     const winLimitsTotalWins = winLimitsModes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
+    const wasFlaggedBefore = isFlaggedLocally(data.Id);
     const winLimits = evaluateWinLimits(data.Id, winLimitsTotalWins);
-    if (winLimits?.reviewFlagged) {
+    if (wasFlaggedBefore && winLimits?.reviewFlagged) {
         showError(`Under review (${winLimits.flaggedReason || "cap exceeded"}). Writes paused.`);
         dbg(`submitToLeaderboardInner blocked: ${winLimits.flaggedReason}`);
         return;
@@ -1215,7 +1219,7 @@ export async function submitToLeaderboardInner(data) {
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
-        reviewFlagged: false,
+        reviewFlagged: winLimits?.reviewFlagged === true,
         lastWriteAt: fb.serverTimestamp(),
     };
 
@@ -1266,7 +1270,7 @@ export async function submitToLeaderboardInner(data) {
 
     // don't publish partial state; leave cooldown open for a retry
     if (!writeOk) return;
-    await syncToRealLeaderboard(fb, data, displayName);
+    await syncToRealLeaderboard(fb, data, displayName, { winLimits, wasFlaggedBefore });
     // Cache the snapshot only after the public board write. A
     // submissions-only success used to skip later retries when the
     // board owner check bailed out.
@@ -1280,13 +1284,17 @@ export async function submitToLeaderboardInner(data) {
 }
 
 
-export async function syncToRealLeaderboard(fb, data, displayName) {
+export async function syncToRealLeaderboard(fb, data, displayName, opts = {}) {
   try {
     if (!firebaseAuthUid) {
         dbg("syncToRealLeaderboard skipped: firebaseAuthUid not ready");
         return;
     }
-    if (isFlaggedLocally(data.Id)) {
+    // Let the trip-write through so all 4 leaderboard docs pick up the
+    // reviewFlagged marker for the site badge. Subsequent ticks block.
+    const winLimits = opts.winLimits || null;
+    const wasFlaggedBefore = opts.wasFlaggedBefore === true;
+    if (wasFlaggedBefore || (isFlaggedLocally(data.Id) && !winLimits?.reviewFlagged)) {
         dbg("syncToRealLeaderboard blocked: account under review");
         return;
     }
@@ -1355,10 +1363,12 @@ export async function syncToRealLeaderboard(fb, data, displayName) {
     // sessionStart isn't set yet and these come back as null.
     // Firestore rejects the whole write if a field is null when the
     // rule expects a number, so we just leave the field off.
+    const reviewFlaggedNow = winLimits?.reviewFlagged === true;
     function payloadWithSession(base) {
         const p = { ...base };
         if (Number.isFinite(sessionStartedAt)) p.sessionStartedAt = sessionStartedAt;
         if (Number.isFinite(sessionLastSeen)) p.sessionLastSeen = sessionLastSeen;
+        if (reviewFlaggedNow) p.reviewFlagged = true;
         return p;
     }
 
