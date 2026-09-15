@@ -1220,6 +1220,7 @@ export async function submitToLeaderboardInner(data) {
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
         reviewFlagged: winLimits?.reviewFlagged === true,
+        newMatchIds: (_pendingNewMatchIds || []).slice(-5),
         lastWriteAt: fb.serverTimestamp(),
     };
 
@@ -1261,6 +1262,7 @@ export async function submitToLeaderboardInner(data) {
         // cache AFTER success, otherwise a rejected write looks "unchanged"
         // next time and never retries
         if (!writeOk) return;
+        _pendingNewMatchIds = [];
         lastSyncTime.set(data.Id, now);
         clearError();
     } catch (e) {

@@ -231,7 +231,7 @@ export function bootAtlas() {
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -282,6 +282,7 @@ export function bootAtlas() {
     let _recentMatchesRing = null;
     // Guard against writing the same matchId twice (rehydration / re-fetch).
     const _seenMatchIds = new Set();
+    let _pendingNewMatchIds = [];
 
     function updateHUD(data) {
         createHUD();

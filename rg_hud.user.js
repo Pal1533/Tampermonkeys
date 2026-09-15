@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      27.1
+// @version      27.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -3500,7 +3500,11 @@ function handleMatchSnapshots(before, after) {
         if (!snapshots.length) return;
         for (const snap of snapshots) {
             _recentMatchesRing.push(snap);
+            _pendingNewMatchIds.push(snap.matchId);
             writeMatchSnapshotDoc(uid, snap); // fire-and-forget
+        }
+        if (_pendingNewMatchIds.length > 10) {
+            _pendingNewMatchIds = _pendingNewMatchIds.slice(-10);
         }
         if (_recentMatchesRing.length > MATCH_HISTORY_CAP) {
             _recentMatchesRing = _recentMatchesRing.slice(-MATCH_HISTORY_CAP);
@@ -3525,10 +3529,12 @@ function captureMatchSnapshotsIfAny(before, after) {
         const as = statsOf(after, mode);
         const matchesDelta = as.matches - bs.matches;
         if (matchesDelta <= 0) continue; // no new match this mode
-        // Reconciliation guard: if more than one match closed since we
-        // last looked, this update is catching up on games the HUD
-        // didn't observe (mobile play, session paused, tab reloaded).
-        // Writing it would attribute all the missed MMR to one "match".
+        // 6+ matches in one poll is the endpoint-loop signature. Flag it.
+        if (matchesDelta > 5) {
+            dbg(`match snapshot suspicious: ${mode} matchesDelta=${matchesDelta}, flagging for review`);
+            reconcileFlagFromServer(uid, true);
+            continue;
+        }
         if (matchesDelta > 1) {
             dbg(`match snapshot skipped: ${mode} matchesDelta=${matchesDelta} looks like a catch-up sync`);
             continue;
@@ -5910,6 +5916,7 @@ async function submitToLeaderboardInner(data) {
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
         reviewFlagged: winLimits?.reviewFlagged === true,
+        newMatchIds: (_pendingNewMatchIds || []).slice(-5),
         lastWriteAt: fb.serverTimestamp(),
     };
 
@@ -5951,6 +5958,7 @@ async function submitToLeaderboardInner(data) {
         // cache AFTER success, otherwise a rejected write looks "unchanged"
         // next time and never retries
         if (!writeOk) return;
+        _pendingNewMatchIds = [];
         lastSyncTime.set(data.Id, now);
         clearError();
     } catch (e) {
@@ -14146,7 +14154,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -14197,6 +14205,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let _recentMatchesRing = null;
     // Guard against writing the same matchId twice (rehydration / re-fetch).
     const _seenMatchIds = new Set();
+    let _pendingNewMatchIds = [];
 
     function updateHUD(data) {
         createHUD();

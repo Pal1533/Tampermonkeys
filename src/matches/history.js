@@ -80,7 +80,11 @@ export function handleMatchSnapshots(before, after) {
         if (!snapshots.length) return;
         for (const snap of snapshots) {
             _recentMatchesRing.push(snap);
+            _pendingNewMatchIds.push(snap.matchId);
             writeMatchSnapshotDoc(uid, snap); // fire-and-forget
+        }
+        if (_pendingNewMatchIds.length > 10) {
+            _pendingNewMatchIds = _pendingNewMatchIds.slice(-10);
         }
         if (_recentMatchesRing.length > MATCH_HISTORY_CAP) {
             _recentMatchesRing = _recentMatchesRing.slice(-MATCH_HISTORY_CAP);
@@ -105,10 +109,12 @@ export function captureMatchSnapshotsIfAny(before, after) {
         const as = statsOf(after, mode);
         const matchesDelta = as.matches - bs.matches;
         if (matchesDelta <= 0) continue; // no new match this mode
-        // Reconciliation guard: if more than one match closed since we
-        // last looked, this update is catching up on games the HUD
-        // didn't observe (mobile play, session paused, tab reloaded).
-        // Writing it would attribute all the missed MMR to one "match".
+        // 6+ matches in one poll is the endpoint-loop signature. Flag it.
+        if (matchesDelta > 5) {
+            dbg(`match snapshot suspicious: ${mode} matchesDelta=${matchesDelta}, flagging for review`);
+            reconcileFlagFromServer(uid, true);
+            continue;
+        }
         if (matchesDelta > 1) {
             dbg(`match snapshot skipped: ${mode} matchesDelta=${matchesDelta} looks like a catch-up sync`);
             continue;
