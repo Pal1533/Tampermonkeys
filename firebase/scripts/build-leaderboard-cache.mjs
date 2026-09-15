@@ -471,6 +471,9 @@ export function buildJsonRow(raw, rank, playlist) {
   if (Number.isFinite(Number(raw?.sessionMmrDelta))) {
     row.sessionMmrDelta = Math.trunc(Number(raw.sessionMmrDelta));
   }
+  if (raw?.reviewFlagged === true) {
+    row.reviewFlagged = true;
+  }
   return row;
 }
 
