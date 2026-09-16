@@ -1109,12 +1109,6 @@ export async function submitToLeaderboardInner(data) {
     const winLimitsTotalWins = winLimitsModes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
     const wasFlaggedBefore = isFlaggedLocally(data.Id);
     const winLimits = evaluateWinLimits(data.Id, winLimitsTotalWins);
-    if (wasFlaggedBefore && winLimits?.reviewFlagged) {
-        showError(`Under review (${winLimits.flaggedReason || "cap exceeded"}). Writes paused.`);
-        dbg(`submitToLeaderboardInner blocked: ${winLimits.flaggedReason}`);
-        return;
-    }
-
     const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, firebaseAuthUid);
 
     // ask for display name once per player unless Rename forces it.
@@ -1126,23 +1120,42 @@ export async function submitToLeaderboardInner(data) {
         existingDisplayName = readStoredDisplayName(atlasTmStorage(), data.Id) || null;
     }
 
-    if (!existingDisplayName || forceRenamePrompt) {
+    // Read the row when local says we're under review, so an admin's
+    // Clear review propagates on the very next submit without needing a
+    // Rename. Non-flagged accounts still only read when displayName is
+    // missing, keeping the write path cheap.
+    let serverClearedFlag = false;
+    if (wasFlaggedBefore || !existingDisplayName || forceRenamePrompt) {
         try {
             const existing = await fb.getDoc(docRef);
             if (existing.exists()) {
                 const existingData = existing.data() || {};
-                if (existingData.displayName) existingDisplayName = existingData.displayName;
-                // Sync local flag with server so admin clears propagate.
-                reconcileFlagFromServer(data.Id, existingData.reviewFlagged === true);
-                if (existingData.reviewFlagged === true) {
+                if (existingData.displayName && !existingDisplayName) {
+                    existingDisplayName = existingData.displayName;
+                }
+                const serverFlagged = existingData.reviewFlagged === true;
+                reconcileFlagFromServer(data.Id, serverFlagged);
+                if (serverFlagged) {
                     showError("Under review by admin. Writes paused until cleared.");
                     dbg("submitToLeaderboardInner blocked: server-side review flag");
                     return;
                 }
+                if (wasFlaggedBefore) serverClearedFlag = true;
+            } else if (wasFlaggedBefore) {
+                // Row is gone (rare, e.g. admin tombstoned). Treat as cleared
+                // so the local flag doesn't stick forever.
+                reconcileFlagFromServer(data.Id, false);
+                serverClearedFlag = true;
             }
         } catch (e) {
             dbg("submitToLeaderboardInner: prior displayName read failed");
         }
+    }
+
+    if (!serverClearedFlag && wasFlaggedBefore && winLimits?.reviewFlagged) {
+        showError(`Under review (${winLimits.flaggedReason || "cap exceeded"}). Writes paused.`);
+        dbg(`submitToLeaderboardInner blocked: ${winLimits.flaggedReason}`);
+        return;
     }
 
     if (!existingDisplayName && !forceRenamePrompt) {
