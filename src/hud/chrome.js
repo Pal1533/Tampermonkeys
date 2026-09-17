@@ -1367,6 +1367,14 @@ export function createHUD() {
                 warnings: _rgWarnBuf,
                 errors: _rgErrorBuf,
                 firestoreWrites: _rgWriteBuf,
+                // hudSessionDenies is the enriched permission-denied log
+                // (appCheck snapshot, access snapshot, keyDiff, likelyCauses).
+                // Bundle it so support drops have "why" not just "what."
+                firestoreDenies: (typeof hudSessionDenies === "object" && Array.isArray(hudSessionDenies))
+                    ? hudSessionDenies.slice(-25)
+                    : [],
+                appCheckNow: typeof appCheckSnapshot === "function" ? appCheckSnapshot() : null,
+                gateNow: typeof accessSnapshot === "function" ? accessSnapshot() : null,
                 log: _rgLogBuf.slice(-100),
             };
             const redactions = [

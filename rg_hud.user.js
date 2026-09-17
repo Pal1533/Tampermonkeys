@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      27.4
+// @version      27.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -3338,6 +3338,14 @@ function createHUD() {
                 warnings: _rgWarnBuf,
                 errors: _rgErrorBuf,
                 firestoreWrites: _rgWriteBuf,
+                // hudSessionDenies is the enriched permission-denied log
+                // (appCheck snapshot, access snapshot, keyDiff, likelyCauses).
+                // Bundle it so support drops have "why" not just "what."
+                firestoreDenies: (typeof hudSessionDenies === "object" && Array.isArray(hudSessionDenies))
+                    ? hudSessionDenies.slice(-25)
+                    : [],
+                appCheckNow: typeof appCheckSnapshot === "function" ? appCheckSnapshot() : null,
+                gateNow: typeof accessSnapshot === "function" ? accessSnapshot() : null,
                 log: _rgLogBuf.slice(-100),
             };
             const redactions = [
@@ -14328,7 +14336,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
