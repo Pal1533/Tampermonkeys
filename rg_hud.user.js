@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      27.9
+// @version      30.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2258,8 +2258,7 @@ function showError(message) {
     if (!dot) return;
     dot.style.display = "inline";
 
-    // Dedupe by origin+message so four permission-denied lines collapse to
-    // "[upsertPlaylistEntry] Missing or insufficient permissions. (x4)".
+    // dedupe by origin+message so four identical rows collapse to one row x4
     const seen = new Map();
     for (const e of _rgErrorBuf.slice(-20)) {
         const key = `${e.origin || ""}:${(e.msg || "").slice(0, 120)}`;
@@ -2284,7 +2283,7 @@ function showError(message) {
         dot.addEventListener("mouseenter", () => positionErrorTooltip(dot, tip));
         dot.addEventListener("mouseleave", () => { tip.style.opacity = "0"; tip.style.pointerEvents = "none"; });
     }
-    dot.removeAttribute("title"); // suppress the native browser tooltip
+    dot.removeAttribute("title");
     tip.innerHTML = renderErrorTooltipHtml(text, rows);
     if (tip.matches(":hover")) positionErrorTooltip(dot, tip);
 }
@@ -2309,7 +2308,6 @@ function ensureErrorTooltipStyles() {
         .rgErrTip .rgErrHint{margin-top:8px;color:#a89898;font-size:11px;font-style:italic;}
     `;
     document.head.appendChild(style);
-    // Show/hide on dot hover.
     const dot = document.getElementById("rgErrDot");
     if (dot) {
         dot.addEventListener("mouseenter", () => {
@@ -3416,9 +3414,6 @@ function createHUD() {
                 warnings: _rgWarnBuf,
                 errors: _rgErrorBuf,
                 firestoreWrites: _rgWriteBuf,
-                // hudSessionDenies is the enriched permission-denied log
-                // (appCheck snapshot, access snapshot, keyDiff, likelyCauses).
-                // Bundle it so support drops have "why" not just "what."
                 firestoreDenies: (typeof hudSessionDenies === "object" && Array.isArray(hudSessionDenies))
                     ? hudSessionDenies.slice(-25)
                     : [],
@@ -3871,11 +3866,7 @@ function syncForgeFromLogin(loginData) {
 
 // src/firebase/auth.js
 
-// Parse an App Check JWT and return its `exp` claim as an epoch-ms
-// timestamp. Used as a fallback when the Worker forgets to include
-// expireTimeMillis in the /mint response, so the Firebase SDK always
-// has a real refresh deadline. Returns null on any parse failure —
-// non-fatal, the caller degrades to whatever the Worker provided.
+// fallback for when the Worker forgets expireTimeMillis
 function extractJwtExpMillis(token) {
     try {
         if (typeof token !== "string") return null;
@@ -4181,9 +4172,6 @@ async function initFirebaseInner() {
                             throw new Error(msg);
                         }
                         const data = await resp.json();
-                        // Parse the JWT's own exp claim as a fallback in case
-                        // the Worker forgets to return expireTimeMillis, so
-                        // the Firebase SDK still knows when to refresh.
                         const jwtExpMillis = extractJwtExpMillis(data.token);
                         const workerExpMillis = Number(data.expireTimeMillis) || null;
                         const effectiveExpMillis = workerExpMillis || jwtExpMillis || null;
@@ -4423,8 +4411,6 @@ async function ensureAnonymousAuth(auth) {
 }
 
 // src/firebase/writes.js
-// Snapshot of the last App Check token the CustomProvider minted, so
-// every deny record can carry token age + TTL to catch worker TTL bugs.
 function appCheckSnapshot() {
     const now = Date.now();
     if (!_lastAppCheckToken) {
@@ -4440,18 +4426,13 @@ function appCheckSnapshot() {
         ageMs,
         ttlMsLeft,
         expired: ttlMsLeft != null ? ttlMsLeft <= 0 : null,
-        // Both raw sources so we can tell whether the Worker returned
-        // expireTimeMillis or we fell back to the JWT exp claim.
         workerExpMs: workerExpMillis || null,
         jwtExpMs: jwtExpMillis || null,
         expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
     };
 }
 
-// Snapshot of the gate/blacklist state we already know from admin/gate.
-// We don't fetch admin/blacklist from the HUD (client can't read it
-// without being admin), so uid/device fields stay null and just flag
-// the check as unavailable. Whatever we DO know we still surface.
+// only what admin/gate exposes; blacklist isn't client-readable
 function accessSnapshot() {
     return {
         gateChecked: !!updateRequiredChecked,
@@ -4462,18 +4443,12 @@ function accessSnapshot() {
     };
 }
 
-// Bucket-specific expected keys, mirroring the Firestore rules. Used to
-// spot missing/unexpected fields in the payload without having to hand-
-// copy rule strings into each deny.
+// mirror of the rules' hasAll/hasOnly lists. refresh when rules change.
 const RULES_REQUIRED_KEYS = {
     leaderboard: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "playlist", "name"],
     script_submissions: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "nickname", "ratings"],
     match_snapshots: ["sourceUserId", "matchId", "mode", "outcome", "before", "after", "roster"],
 };
-// Kept in sync with the deployed Firestore rules' isValidScriptEntry
-// hasOnly list. Refresh whenever those change or the hint below will
-// false-flag legitimate keys the client already writes.
-// Last synced: 2026-09-15 ruleset (0b279a06-0852-450c-a084-9705a6945236).
 const RULES_ALLOWED_KEYS = {
     leaderboard: [
         "sourceUserId", "playlist", "deviceId", "scriptVersion", "versionNum", "lastWriteAt",
@@ -4497,9 +4472,6 @@ function payloadKeyDiff(label, data) {
     return { keys, missing, unexpected };
 }
 
-// Hard-common causes for the HUD's red triangle beyond a rule deny —
-// e.g. auth not ready, adblocker, quota. Caller supplies err + payload
-// and we return an ordered list of the most likely root causes.
 function classifyDeny(err, opts = {}) {
     const causes = [];
     const code = String(err?.code || "").toLowerCase();
@@ -4533,9 +4505,7 @@ function classifyDeny(err, opts = {}) {
         causes.push("Firestore quota exhausted (project-level cap tripped)");
     }
     if (code === "unauthenticated") causes.push("Firebase auth token missing or rejected");
-    // Server-side gates the payload cannot self-inspect. Only surface as
-    // hints when the client-side checks all passed but the deny persists,
-    // so we do not drown the record in speculative reasons for real bugs.
+    // only surface server-side hints when nothing client-side flagged
     const noClientCause = causes.length === 0
         && (!opts.keyDiff?.missing?.length)
         && (!opts.keyDiff?.unexpected?.length);
@@ -6133,10 +6103,7 @@ async function submitToLeaderboardInner(data) {
         existingDisplayName = readStoredDisplayName(atlasTmStorage(), data.Id) || null;
     }
 
-    // Read the row when local says we're under review, so an admin's
-    // Clear review propagates on the very next submit without needing a
-    // Rename. Non-flagged accounts still only read when displayName is
-    // missing, keeping the write path cheap.
+    // if local says flagged, always re-check server so admin clears propagate
     let serverClearedFlag = false;
     if (wasFlaggedBefore || !existingDisplayName || forceRenamePrompt) {
         try {
@@ -6155,8 +6122,7 @@ async function submitToLeaderboardInner(data) {
                 }
                 if (wasFlaggedBefore) serverClearedFlag = true;
             } else if (wasFlaggedBefore) {
-                // Row is gone (rare, e.g. admin tombstoned). Treat as cleared
-                // so the local flag doesn't stick forever.
+                // row is gone, treat as cleared
                 reconcileFlagFromServer(data.Id, false);
                 serverClearedFlag = true;
             }
@@ -6245,10 +6211,7 @@ async function submitToLeaderboardInner(data) {
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
-        // Read the current local flag AFTER reconcileFlagFromServer has
-        // had a chance to clear it. Using the winLimits object captured
-        // at the top of this function would write back the pre-reconcile
-        // value and instantly re-block every subsequent write.
+        // reread post-reconcile, winLimits was captured before the clear
         reviewFlagged: isFlaggedLocally(data.Id),
         newMatchIds: (_pendingNewMatchIds || []).slice(-5),
         lastWriteAt: fb.serverTimestamp(),
@@ -14488,7 +14451,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -14658,9 +14621,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // Set by initFirebase() after anon sign-in. Rules bind writes to this.
     let firebaseAuthUid = null;
     let firebaseAuthError = null;
-    // Last App Check token metadata, so permission-denied writes can dump
-    // token age + TTL into the deny record for App Check debugging.
-    // { mintedAt: msEpoch, expireTimeMillis: msEpoch, len: number, error: string|null }
+    // { mintedAt, expireTimeMillis, workerExpMillis, jwtExpMillis, len, error }
     let _lastAppCheckToken = null;
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;

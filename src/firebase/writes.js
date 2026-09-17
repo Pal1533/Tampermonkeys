@@ -1,5 +1,3 @@
-// Snapshot of the last App Check token the CustomProvider minted, so
-// every deny record can carry token age + TTL to catch worker TTL bugs.
 export function appCheckSnapshot() {
     const now = Date.now();
     if (!_lastAppCheckToken) {
@@ -15,18 +13,13 @@ export function appCheckSnapshot() {
         ageMs,
         ttlMsLeft,
         expired: ttlMsLeft != null ? ttlMsLeft <= 0 : null,
-        // Both raw sources so we can tell whether the Worker returned
-        // expireTimeMillis or we fell back to the JWT exp claim.
         workerExpMs: workerExpMillis || null,
         jwtExpMs: jwtExpMillis || null,
         expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
     };
 }
 
-// Snapshot of the gate/blacklist state we already know from admin/gate.
-// We don't fetch admin/blacklist from the HUD (client can't read it
-// without being admin), so uid/device fields stay null and just flag
-// the check as unavailable. Whatever we DO know we still surface.
+// only what admin/gate exposes; blacklist isn't client-readable
 export function accessSnapshot() {
     return {
         gateChecked: !!updateRequiredChecked,
@@ -37,18 +30,12 @@ export function accessSnapshot() {
     };
 }
 
-// Bucket-specific expected keys, mirroring the Firestore rules. Used to
-// spot missing/unexpected fields in the payload without having to hand-
-// copy rule strings into each deny.
+// mirror of the rules' hasAll/hasOnly lists. refresh when rules change.
 const RULES_REQUIRED_KEYS = {
     leaderboard: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "playlist", "name"],
     script_submissions: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "nickname", "ratings"],
     match_snapshots: ["sourceUserId", "matchId", "mode", "outcome", "before", "after", "roster"],
 };
-// Kept in sync with the deployed Firestore rules' isValidScriptEntry
-// hasOnly list. Refresh whenever those change or the hint below will
-// false-flag legitimate keys the client already writes.
-// Last synced: 2026-09-15 ruleset (0b279a06-0852-450c-a084-9705a6945236).
 const RULES_ALLOWED_KEYS = {
     leaderboard: [
         "sourceUserId", "playlist", "deviceId", "scriptVersion", "versionNum", "lastWriteAt",
@@ -72,9 +59,6 @@ export function payloadKeyDiff(label, data) {
     return { keys, missing, unexpected };
 }
 
-// Hard-common causes for the HUD's red triangle beyond a rule deny —
-// e.g. auth not ready, adblocker, quota. Caller supplies err + payload
-// and we return an ordered list of the most likely root causes.
 export function classifyDeny(err, opts = {}) {
     const causes = [];
     const code = String(err?.code || "").toLowerCase();
@@ -108,9 +92,7 @@ export function classifyDeny(err, opts = {}) {
         causes.push("Firestore quota exhausted (project-level cap tripped)");
     }
     if (code === "unauthenticated") causes.push("Firebase auth token missing or rejected");
-    // Server-side gates the payload cannot self-inspect. Only surface as
-    // hints when the client-side checks all passed but the deny persists,
-    // so we do not drown the record in speculative reasons for real bugs.
+    // only surface server-side hints when nothing client-side flagged
     const noClientCause = causes.length === 0
         && (!opts.keyDiff?.missing?.length)
         && (!opts.keyDiff?.unexpected?.length);

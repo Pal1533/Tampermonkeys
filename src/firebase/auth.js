@@ -1,9 +1,5 @@
 
-// Parse an App Check JWT and return its `exp` claim as an epoch-ms
-// timestamp. Used as a fallback when the Worker forgets to include
-// expireTimeMillis in the /mint response, so the Firebase SDK always
-// has a real refresh deadline. Returns null on any parse failure —
-// non-fatal, the caller degrades to whatever the Worker provided.
+// fallback for when the Worker forgets expireTimeMillis
 export function extractJwtExpMillis(token) {
     try {
         if (typeof token !== "string") return null;
@@ -309,9 +305,6 @@ export async function initFirebaseInner() {
                             throw new Error(msg);
                         }
                         const data = await resp.json();
-                        // Parse the JWT's own exp claim as a fallback in case
-                        // the Worker forgets to return expireTimeMillis, so
-                        // the Firebase SDK still knows when to refresh.
                         const jwtExpMillis = extractJwtExpMillis(data.token);
                         const workerExpMillis = Number(data.expireTimeMillis) || null;
                         const effectiveExpMillis = workerExpMillis || jwtExpMillis || null;

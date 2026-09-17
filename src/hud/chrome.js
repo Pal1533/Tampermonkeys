@@ -287,8 +287,7 @@ export function showError(message) {
     if (!dot) return;
     dot.style.display = "inline";
 
-    // Dedupe by origin+message so four permission-denied lines collapse to
-    // "[upsertPlaylistEntry] Missing or insufficient permissions. (x4)".
+    // dedupe by origin+message so four identical rows collapse to one row x4
     const seen = new Map();
     for (const e of _rgErrorBuf.slice(-20)) {
         const key = `${e.origin || ""}:${(e.msg || "").slice(0, 120)}`;
@@ -313,7 +312,7 @@ export function showError(message) {
         dot.addEventListener("mouseenter", () => positionErrorTooltip(dot, tip));
         dot.addEventListener("mouseleave", () => { tip.style.opacity = "0"; tip.style.pointerEvents = "none"; });
     }
-    dot.removeAttribute("title"); // suppress the native browser tooltip
+    dot.removeAttribute("title");
     tip.innerHTML = renderErrorTooltipHtml(text, rows);
     if (tip.matches(":hover")) positionErrorTooltip(dot, tip);
 }
@@ -338,7 +337,6 @@ function ensureErrorTooltipStyles() {
         .rgErrTip .rgErrHint{margin-top:8px;color:#a89898;font-size:11px;font-style:italic;}
     `;
     document.head.appendChild(style);
-    // Show/hide on dot hover.
     const dot = document.getElementById("rgErrDot");
     if (dot) {
         dot.addEventListener("mouseenter", () => {
@@ -1445,9 +1443,6 @@ export function createHUD() {
                 warnings: _rgWarnBuf,
                 errors: _rgErrorBuf,
                 firestoreWrites: _rgWriteBuf,
-                // hudSessionDenies is the enriched permission-denied log
-                // (appCheck snapshot, access snapshot, keyDiff, likelyCauses).
-                // Bundle it so support drops have "why" not just "what."
                 firestoreDenies: (typeof hudSessionDenies === "object" && Array.isArray(hudSessionDenies))
                     ? hudSessionDenies.slice(-25)
                     : [],

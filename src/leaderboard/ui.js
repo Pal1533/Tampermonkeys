@@ -1120,10 +1120,7 @@ export async function submitToLeaderboardInner(data) {
         existingDisplayName = readStoredDisplayName(atlasTmStorage(), data.Id) || null;
     }
 
-    // Read the row when local says we're under review, so an admin's
-    // Clear review propagates on the very next submit without needing a
-    // Rename. Non-flagged accounts still only read when displayName is
-    // missing, keeping the write path cheap.
+    // if local says flagged, always re-check server so admin clears propagate
     let serverClearedFlag = false;
     if (wasFlaggedBefore || !existingDisplayName || forceRenamePrompt) {
         try {
@@ -1142,8 +1139,7 @@ export async function submitToLeaderboardInner(data) {
                 }
                 if (wasFlaggedBefore) serverClearedFlag = true;
             } else if (wasFlaggedBefore) {
-                // Row is gone (rare, e.g. admin tombstoned). Treat as cleared
-                // so the local flag doesn't stick forever.
+                // row is gone, treat as cleared
                 reconcileFlagFromServer(data.Id, false);
                 serverClearedFlag = true;
             }
@@ -1232,10 +1228,7 @@ export async function submitToLeaderboardInner(data) {
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
-        // Read the current local flag AFTER reconcileFlagFromServer has
-        // had a chance to clear it. Using the winLimits object captured
-        // at the top of this function would write back the pre-reconcile
-        // value and instantly re-block every subsequent write.
+        // reread post-reconcile, winLimits was captured before the clear
         reviewFlagged: isFlaggedLocally(data.Id),
         newMatchIds: (_pendingNewMatchIds || []).slice(-5),
         lastWriteAt: fb.serverTimestamp(),
