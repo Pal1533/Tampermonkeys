@@ -284,15 +284,93 @@ export function setAutoVisible(visible) {
 export function showError(message) {
     const text = formatAtlasError(message);
     const dot = document.getElementById("rgErrDot");
-    if (dot) {
-        dot.style.display = "inline";
-        const fromBuf = _rgErrorBuf.slice(-5).map(e => {
-            const when = e.at ? new Date(e.at).toLocaleTimeString() + " — " : "";
-            return when + (e.origin ? `[${e.origin}] ` : "") + (e.msg || "");
-        }).filter(Boolean);
-        const lines = [text, ...fromBuf].filter(Boolean);
-        dot.title = lines.join("\n") || text;
+    if (!dot) return;
+    dot.style.display = "inline";
+
+    // Dedupe by origin+message so four permission-denied lines collapse to
+    // "[upsertPlaylistEntry] Missing or insufficient permissions. (x4)".
+    const seen = new Map();
+    for (const e of _rgErrorBuf.slice(-20)) {
+        const key = `${e.origin || ""}:${(e.msg || "").slice(0, 120)}`;
+        const prev = seen.get(key);
+        if (prev) prev.count += 1;
+        else seen.set(key, { ...e, count: 1 });
     }
+    const rows = [...seen.values()].slice(-4).map(e => ({
+        when: e.at ? new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+        origin: e.origin || "",
+        msg: e.msg || "",
+        count: e.count,
+    }));
+
+    ensureErrorTooltipStyles();
+    let tip = document.getElementById("rgErrTip");
+    if (!tip) {
+        tip = document.createElement("div");
+        tip.id = "rgErrTip";
+        tip.className = "rgErrTip";
+        document.body.appendChild(tip);
+        dot.addEventListener("mouseenter", () => positionErrorTooltip(dot, tip));
+        dot.addEventListener("mouseleave", () => { tip.style.opacity = "0"; tip.style.pointerEvents = "none"; });
+    }
+    dot.removeAttribute("title"); // suppress the native browser tooltip
+    tip.innerHTML = renderErrorTooltipHtml(text, rows);
+    if (tip.matches(":hover")) positionErrorTooltip(dot, tip);
+}
+
+function ensureErrorTooltipStyles() {
+    if (document.getElementById("rgErrTipCss")) return;
+    const style = document.createElement("style");
+    style.id = "rgErrTipCss";
+    style.textContent = `
+        .rgErrTip{position:fixed;z-index:2147483647;max-width:340px;padding:10px 12px;border-radius:10px;
+            background:rgba(20,10,10,0.96);border:1px solid #ff6b6b;color:#ffdada;
+            font:12px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            box-shadow:0 8px 24px rgba(0,0,0,0.5);opacity:0;pointer-events:none;
+            transition:opacity 120ms ease;}
+        #rgErrDot:hover ~ .rgErrTip,.rgErrTip:hover{opacity:1;pointer-events:auto;}
+        .rgErrTip .rgErrHead{font-weight:600;color:#ff8b8b;margin-bottom:6px;letter-spacing:.02em;}
+        .rgErrTip .rgErrRow{display:flex;gap:6px;margin-top:4px;align-items:baseline;font-size:11px;}
+        .rgErrTip .rgErrWhen{color:#8a6f6f;flex-shrink:0;font-variant-numeric:tabular-nums;}
+        .rgErrTip .rgErrOrigin{color:#ffb08a;flex-shrink:0;}
+        .rgErrTip .rgErrMsg{color:#ffe0e0;overflow-wrap:anywhere;}
+        .rgErrTip .rgErrCount{color:#ff8b8b;font-weight:600;flex-shrink:0;}
+        .rgErrTip .rgErrHint{margin-top:8px;color:#a89898;font-size:11px;font-style:italic;}
+    `;
+    document.head.appendChild(style);
+    // Show/hide on dot hover.
+    const dot = document.getElementById("rgErrDot");
+    if (dot) {
+        dot.addEventListener("mouseenter", () => {
+            const t = document.getElementById("rgErrTip");
+            if (!t) return;
+            t.style.opacity = "1";
+            t.style.pointerEvents = "auto";
+        });
+    }
+}
+
+function renderErrorTooltipHtml(head, rows) {
+    const esc = (s) => String(s || "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+    }[c]));
+    const rowsHtml = rows.map(r => {
+        const parts = [];
+        if (r.when) parts.push(`<span class="rgErrWhen">${esc(r.when)}</span>`);
+        if (r.origin) parts.push(`<span class="rgErrOrigin">[${esc(r.origin)}]</span>`);
+        parts.push(`<span class="rgErrMsg">${esc(r.msg)}</span>`);
+        if (r.count > 1) parts.push(`<span class="rgErrCount">×${r.count}</span>`);
+        return `<div class="rgErrRow">${parts.join(" ")}</div>`;
+    }).join("");
+    return `<div class="rgErrHead">${esc(head)}</div>${rowsHtml}<div class="rgErrHint">Run rgDump() or download debug bundle in Settings for full details.</div>`;
+}
+
+function positionErrorTooltip(dot, tip) {
+    const r = dot.getBoundingClientRect();
+    tip.style.opacity = "1";
+    tip.style.pointerEvents = "auto";
+    tip.style.top = `${Math.min(window.innerHeight - 200, r.bottom + 6)}px`;
+    tip.style.left = `${Math.max(8, Math.min(window.innerWidth - 360, r.right - 340))}px`;
 }
 
 
@@ -996,7 +1074,7 @@ export function createHUD() {
         <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:8px;" id="rgDragHandle">
             <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">ATLAS</span>
             <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
-                <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;cursor:help;">⚠</span>
+                <span id="rgErrDot" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;cursor:pointer;">⚠</span>
                 <span id="rgWarnDot" title="" style="display:none;color:#ffbb33;font-weight:bold;font-size:14px;cursor:help;" data-tip="ATLAS saw something unexpected (hover for details, or run rgDump() for full log)">⚑</span>
                 <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
                 <button id="rgForgeBtn" class="rgIconBtn" title="Name Forge">🎨</button>
