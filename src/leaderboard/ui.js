@@ -1232,7 +1232,11 @@ export async function submitToLeaderboardInner(data) {
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
-        reviewFlagged: winLimits?.reviewFlagged === true,
+        // Read the current local flag AFTER reconcileFlagFromServer has
+        // had a chance to clear it. Using the winLimits object captured
+        // at the top of this function would write back the pre-reconcile
+        // value and instantly re-block every subsequent write.
+        reviewFlagged: isFlaggedLocally(data.Id),
         newMatchIds: (_pendingNewMatchIds || []).slice(-5),
         lastWriteAt: fb.serverTimestamp(),
     };

@@ -45,8 +45,21 @@ const RULES_REQUIRED_KEYS = {
     script_submissions: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "nickname", "ratings"],
     match_snapshots: ["sourceUserId", "matchId", "mode", "outcome", "before", "after", "roster"],
 };
+// Kept in sync with the deployed Firestore rules' isValidScriptEntry
+// hasOnly list. Refresh whenever those change or the hint below will
+// false-flag legitimate keys the client already writes.
+// Last synced: 2026-09-15 ruleset (0b279a06-0852-450c-a084-9705a6945236).
 const RULES_ALLOWED_KEYS = {
-    leaderboard: ["sourceUserId","deviceId","scriptVersion","versionNum","lastWriteAt","playlist","name","mmr","wins","matches","flag","icons","iconSize","glowColor","glowStrength","updatedAt"],
+    leaderboard: [
+        "sourceUserId", "playlist", "deviceId", "scriptVersion", "versionNum", "lastWriteAt",
+        "name", "mmr", "wins", "matches",
+        "rating", "rd", "vol",
+        "sessionMmrDelta", "sessionStartedAt", "sessionLastSeen",
+        "currentStreak", "rgPlayerId",
+        "flag", "icons",
+        "dailyWins", "hourlyWins", "reviewFlagged",
+        "newMatchIds",
+    ],
 };
 
 export function payloadKeyDiff(label, data) {

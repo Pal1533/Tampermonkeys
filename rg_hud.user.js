@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      27.8
+// @version      27.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -4470,8 +4470,21 @@ const RULES_REQUIRED_KEYS = {
     script_submissions: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "nickname", "ratings"],
     match_snapshots: ["sourceUserId", "matchId", "mode", "outcome", "before", "after", "roster"],
 };
+// Kept in sync with the deployed Firestore rules' isValidScriptEntry
+// hasOnly list. Refresh whenever those change or the hint below will
+// false-flag legitimate keys the client already writes.
+// Last synced: 2026-09-15 ruleset (0b279a06-0852-450c-a084-9705a6945236).
 const RULES_ALLOWED_KEYS = {
-    leaderboard: ["sourceUserId","deviceId","scriptVersion","versionNum","lastWriteAt","playlist","name","mmr","wins","matches","flag","icons","iconSize","glowColor","glowStrength","updatedAt"],
+    leaderboard: [
+        "sourceUserId", "playlist", "deviceId", "scriptVersion", "versionNum", "lastWriteAt",
+        "name", "mmr", "wins", "matches",
+        "rating", "rd", "vol",
+        "sessionMmrDelta", "sessionStartedAt", "sessionLastSeen",
+        "currentStreak", "rgPlayerId",
+        "flag", "icons",
+        "dailyWins", "hourlyWins", "reviewFlagged",
+        "newMatchIds",
+    ],
 };
 
 function payloadKeyDiff(label, data) {
@@ -6232,7 +6245,11 @@ async function submitToLeaderboardInner(data) {
         recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
         dailyWins: winLimits?.dailyWins || null,
         hourlyWins: winLimits?.hourlyWins || null,
-        reviewFlagged: winLimits?.reviewFlagged === true,
+        // Read the current local flag AFTER reconcileFlagFromServer has
+        // had a chance to clear it. Using the winLimits object captured
+        // at the top of this function would write back the pre-reconcile
+        // value and instantly re-block every subsequent write.
+        reviewFlagged: isFlaggedLocally(data.Id),
         newMatchIds: (_pendingNewMatchIds || []).slice(-5),
         lastWriteAt: fb.serverTimestamp(),
     };
@@ -14471,7 +14488,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
