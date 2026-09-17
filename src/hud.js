@@ -231,7 +231,7 @@ export function bootAtlas() {
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -401,6 +401,10 @@ export function bootAtlas() {
     // Set by initFirebase() after anon sign-in. Rules bind writes to this.
     let firebaseAuthUid = null;
     let firebaseAuthError = null;
+    // Last App Check token metadata, so permission-denied writes can dump
+    // token age + TTL into the deny record for App Check debugging.
+    // { mintedAt: msEpoch, expireTimeMillis: msEpoch, len: number, error: string|null }
+    let _lastAppCheckToken = null;
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;

@@ -276,10 +276,22 @@ export async function initFirebaseInner() {
                             const errText = await resp.text().catch(() => "");
                             const msg = "Worker " + resp.status + ": " + errText;
                             dbg("AppCheck: token fetch REJECTED — " + msg);
+                            _lastAppCheckToken = {
+                                mintedAt: Date.now(),
+                                expireTimeMillis: null,
+                                len: 0,
+                                error: msg,
+                            };
                             throw new Error(msg);
                         }
                         const data = await resp.json();
                         dbg("AppCheck: token minted via Worker (len=" + (data.token?.length || 0) + ")");
+                        _lastAppCheckToken = {
+                            mintedAt: Date.now(),
+                            expireTimeMillis: Number(data.expireTimeMillis) || null,
+                            len: data.token?.length || 0,
+                            error: null,
+                        };
                         return { token: data.token, expireTimeMillis: data.expireTimeMillis };
                     },
                 }),
@@ -331,15 +343,47 @@ export async function initFirebaseInner() {
             getAppCheckToken(atlasAppCheckHandle).then(
                 (result) => {
                     const tokLen = result?.token?.length || 0;
-                    if (tokLen > 0) dbg("AppCheck: initial fetch ok (len=" + tokLen + ")");
-                    else dbg("AppCheck: initial fetch returned empty");
+                    if (tokLen > 0) {
+                        dbg("AppCheck: initial fetch ok (len=" + tokLen + ")");
+                        if (!_lastAppCheckToken || !_lastAppCheckToken.mintedAt) {
+                            _lastAppCheckToken = {
+                                mintedAt: Date.now(),
+                                expireTimeMillis: Number(result?.expireTimeMillis) || null,
+                                len: tokLen,
+                                error: null,
+                            };
+                        }
+                    } else {
+                        dbg("AppCheck: initial fetch returned empty");
+                        _lastAppCheckToken = {
+                            mintedAt: Date.now(),
+                            expireTimeMillis: null,
+                            len: 0,
+                            error: "empty result",
+                        };
+                    }
                 },
-                (err) => dbg("AppCheck: initial fetch failed — " + getErrMsg(err)),
+                (err) => {
+                    const msg = getErrMsg(err);
+                    dbg("AppCheck: initial fetch failed — " + msg);
+                    _lastAppCheckToken = {
+                        mintedAt: Date.now(),
+                        expireTimeMillis: null,
+                        len: 0,
+                        error: msg,
+                    };
+                },
             );
         }
         const denySubject = () => {
             const uid = currentUidForDeny();
             return uid ? `uid=${uid}` : "";
+        };
+        const enrichReadDeny = (label, err) => {
+            const ac = appCheckSnapshot();
+            const acc = accessSnapshot();
+            const likelyCauses = classifyDeny(err, { ac, acc, label });
+            return { appCheck: ac, access: acc, likelyCauses };
         };
         const getDoc = async ref => {
             try {
@@ -350,6 +394,7 @@ export async function initFirebaseInner() {
                 if (isDeny(err)) logDeny(ref?.path || "document", {
                     op: "read", path: ref?.path, err,
                     subject: denySubject(),
+                    ...enrichReadDeny(ref?.path || "document", err),
                 });
                 throw err;
             }
@@ -363,6 +408,7 @@ export async function initFirebaseInner() {
                 if (isDeny(err)) logDeny(target?.path || "query", {
                     op: "query", path: target?.path, err,
                     subject: denySubject(),
+                    ...enrichReadDeny(target?.path || "query", err),
                 });
                 throw err;
             }
@@ -376,6 +422,7 @@ export async function initFirebaseInner() {
                 if (isDeny(err)) logDeny(target?.path || "count query", {
                     op: "count", path: target?.path, err,
                     subject: denySubject(),
+                    ...enrichReadDeny(target?.path || "count query", err),
                 });
                 throw err;
             }
@@ -388,6 +435,7 @@ export async function initFirebaseInner() {
                 if (isDeny(err)) logDeny(target?.path || "listener", {
                     op: "listener", path: target?.path, err,
                     subject: denySubject(),
+                    ...enrichReadDeny(target?.path || "listener", err),
                 });
                 if (typeof onError === "function") onError(err);
             });

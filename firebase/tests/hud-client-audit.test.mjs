@@ -158,7 +158,7 @@ test("deny logger attaches client-side reasons (19.5+)", () => {
   // catch — otherwise deny records ship without the reason list and
   // the admin panel can't say "mode must be one of [...], got X".
   assert.match(hudSource, /function describeDenyReasons\(bucket, data, opts/);
-  assert.match(hudSource, /reasons: describeDenyReasons\(label, data, \{ docId \}\)/);
+  assert.match(hudSource, /const reasons = describeDenyReasons\(label, stamped, \{ docId \}\);/);
   // Per-bucket helpers must be defined for the three write paths.
   assert.match(hudSource, /function describeLeaderboardReasons\(/);
   assert.match(hudSource, /function describeScriptSubmissionReasons\(/);

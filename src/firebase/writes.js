@@ -1,3 +1,98 @@
+// Snapshot of the last App Check token the CustomProvider minted, so
+// every deny record can carry token age + TTL to catch worker TTL bugs.
+export function appCheckSnapshot() {
+    const now = Date.now();
+    if (!_lastAppCheckToken) {
+        return { present: false, note: "no token minted yet" };
+    }
+    const { mintedAt, expireTimeMillis, len, error } = _lastAppCheckToken;
+    const ageMs = mintedAt ? now - mintedAt : null;
+    const ttlMsLeft = expireTimeMillis ? expireTimeMillis - now : null;
+    return {
+        present: true,
+        len,
+        error: error || null,
+        ageMs,
+        ttlMsLeft,
+        expired: ttlMsLeft != null ? ttlMsLeft <= 0 : null,
+    };
+}
+
+// Snapshot of the gate/blacklist state we already know from admin/gate.
+// We don't fetch admin/blacklist from the HUD (client can't read it
+// without being admin), so uid/device fields stay null and just flag
+// the check as unavailable. Whatever we DO know we still surface.
+export function accessSnapshot() {
+    return {
+        gateChecked: !!updateRequiredChecked,
+        pauseWrites: !!writesPaused,
+        updateRequired: !!updateRequired,
+        notAllowlisted: !!notAllowlisted,
+        clientVersionNum: typeof SCRIPT_VERSION_NUM === "number" ? SCRIPT_VERSION_NUM : null,
+    };
+}
+
+// Bucket-specific expected keys, mirroring the Firestore rules. Used to
+// spot missing/unexpected fields in the payload without having to hand-
+// copy rule strings into each deny.
+const RULES_REQUIRED_KEYS = {
+    leaderboard: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "playlist", "name"],
+    script_submissions: ["sourceUserId", "deviceId", "versionNum", "lastWriteAt", "nickname", "ratings"],
+    match_snapshots: ["sourceUserId", "matchId", "mode", "outcome", "before", "after", "roster"],
+};
+const RULES_ALLOWED_KEYS = {
+    leaderboard: ["sourceUserId","deviceId","scriptVersion","versionNum","lastWriteAt","playlist","name","mmr","wins","matches","flag","icons","iconSize","glowColor","glowStrength","updatedAt"],
+};
+
+export function payloadKeyDiff(label, data) {
+    const bucket = bucketLabel(label);
+    const keys = data && typeof data === "object" ? Object.keys(data) : [];
+    const required = RULES_REQUIRED_KEYS[bucket] || [];
+    const allowed = RULES_ALLOWED_KEYS[bucket];
+    const missing = required.filter(k => !keys.includes(k));
+    const unexpected = allowed ? keys.filter(k => !allowed.includes(k)) : [];
+    return { keys, missing, unexpected };
+}
+
+// Hard-common causes for the HUD's red triangle beyond a rule deny —
+// e.g. auth not ready, adblocker, quota. Caller supplies err + payload
+// and we return an ordered list of the most likely root causes.
+export function classifyDeny(err, opts = {}) {
+    const causes = [];
+    const code = String(err?.code || "").toLowerCase();
+    const msg = String(err?.message || "").toLowerCase();
+    if (!firebaseAuthUid) causes.push("auth-not-ready: firebaseAuthUid is null");
+    if (opts.acc) {
+        if (opts.acc.pauseWrites) causes.push("admin/gate.pauseWrites=true (writes globally halted)");
+        if (opts.acc.updateRequired) causes.push("client version below admin/gate.minVersion (Tampermonkey update needed)");
+        if (opts.acc.notAllowlisted) causes.push("uid not on admin allowlist (admin/gate read denied) — request access");
+    }
+    if (opts.ac) {
+        if (opts.ac.present === false) causes.push("no App Check token has been minted this session");
+        else {
+            if (opts.ac.error) causes.push(`App Check mint error: ${opts.ac.error}`);
+            if (opts.ac.expired === true) causes.push(`App Check token expired ${Math.round((opts.ac.ttlMsLeft ?? 0) / -1000)}s ago`);
+            else if (opts.ac.ttlMsLeft != null && opts.ac.ttlMsLeft < 30000) {
+                causes.push(`App Check token near expiry (${Math.round(opts.ac.ttlMsLeft / 1000)}s left)`);
+            }
+        }
+    }
+    if (opts.keyDiff?.missing?.length) {
+        causes.push(`payload missing required keys: ${opts.keyDiff.missing.join(", ")}`);
+    }
+    if (opts.keyDiff?.unexpected?.length) {
+        causes.push(`payload has keys the rule does not allow: ${opts.keyDiff.unexpected.join(", ")}`);
+    }
+    if (msg.includes("blocked_by_client") || msg.includes("failed to fetch")) {
+        causes.push("network blocked (ad blocker / privacy extension / offline)");
+    }
+    if (msg.includes("quota") || msg.includes("resource-exhausted")) {
+        causes.push("Firestore quota exhausted (project-level cap tripped)");
+    }
+    if (code === "unauthenticated") causes.push("Firebase auth token missing or rejected");
+    return causes;
+}
+
 export function logDeny(label, detail = null) {
     const bucket = bucketLabel(label);
     hudSessionDeniesByLabel.set(bucket, (hudSessionDeniesByLabel.get(bucket) || 0) + 1);
@@ -14,6 +109,13 @@ export function logDeny(label, detail = null) {
         subject: truncateForDeny(detail?.subject, 120),
         rule: truncateForDeny(detail?.rule || guessDenyRule(err?.message), 40),
         reasons,
+        authUid: firebaseAuthUid || null,
+        appCheck: detail?.appCheck || null,
+        access: detail?.access || null,
+        keyDiff: detail?.keyDiff || null,
+        likelyCauses: Array.isArray(detail?.likelyCauses)
+            ? detail.likelyCauses.slice(0, 8).map(c => truncateForDeny(c, 160))
+            : [],
     };
     hudSessionDenies.push(record);
     if (hudSessionDenies.length > HUD_DENY_RECORD_MAX) hudSessionDenies.shift();
@@ -161,12 +263,23 @@ export async function atlasSetDoc(fb, label, ref, data, options) {
     } catch (e) {
         if (e && String(e.code || "").includes("permission-denied")) {
             const docId = ref && ref.id;
+            const ac = appCheckSnapshot();
+            const acc = accessSnapshot();
+            const keyDiff = payloadKeyDiff(label, stamped);
+            const reasons = describeDenyReasons(label, stamped, { docId });
+            const likelyCauses = classifyDeny(e, {
+                ac, acc, keyDiff, data: stamped, label,
+            });
             logDeny(label, {
                 op: "write",
                 path: ref && ref.path,
                 err: e,
                 subject: describeWriteSubject(label, data),
-                reasons: describeDenyReasons(label, data, { docId }),
+                reasons,
+                appCheck: ac,
+                access: acc,
+                keyDiff,
+                likelyCauses,
             });
         }
         _pushWriteAttempt({
