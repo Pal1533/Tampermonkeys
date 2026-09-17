@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.0
+// @version      30.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -4472,6 +4472,7 @@ function payloadKeyDiff(label, data) {
     return { keys, missing, unexpected };
 }
 
+
 function classifyDeny(err, opts = {}) {
     const causes = [];
     const code = String(err?.code || "").toLowerCase();
@@ -4509,6 +4510,9 @@ function classifyDeny(err, opts = {}) {
     const noClientCause = causes.length === 0
         && (!opts.keyDiff?.missing?.length)
         && (!opts.keyDiff?.unexpected?.length);
+    if (noClientCause && opts.merge && String(opts.label || "").includes("leaderboard")) {
+        causes.push("merge:true trap: legacy fields on the server doc (reviewFlaggedAt, reviewClearedAt, deleted, deletedAt, etc.) can trip isValidScriptEntry's hasOnly. PATCH those off the doc to fix.");
+    }
     if (noClientCause && String(opts.label || "").includes("script_submissions")) {
         try {
             if (typeof isFlaggedLocally === "function" && opts.data?.rgPlayerId
@@ -4699,7 +4703,7 @@ async function atlasSetDoc(fb, label, ref, data, options) {
             const keyDiff = payloadKeyDiff(label, stamped);
             const reasons = describeDenyReasons(label, stamped, { docId });
             const likelyCauses = classifyDeny(e, {
-                ac, acc, keyDiff, data: stamped, label,
+                ac, acc, keyDiff, data: stamped, label, merge: !!options?.merge,
             });
             logDeny(label, {
                 op: "write",
@@ -14451,7 +14455,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

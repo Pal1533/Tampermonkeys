@@ -59,6 +59,7 @@ export function payloadKeyDiff(label, data) {
     return { keys, missing, unexpected };
 }
 
+
 export function classifyDeny(err, opts = {}) {
     const causes = [];
     const code = String(err?.code || "").toLowerCase();
@@ -96,6 +97,9 @@ export function classifyDeny(err, opts = {}) {
     const noClientCause = causes.length === 0
         && (!opts.keyDiff?.missing?.length)
         && (!opts.keyDiff?.unexpected?.length);
+    if (noClientCause && opts.merge && String(opts.label || "").includes("leaderboard")) {
+        causes.push("merge:true trap: legacy fields on the server doc (reviewFlaggedAt, reviewClearedAt, deleted, deletedAt, etc.) can trip isValidScriptEntry's hasOnly. PATCH those off the doc to fix.");
+    }
     if (noClientCause && String(opts.label || "").includes("script_submissions")) {
         try {
             if (typeof isFlaggedLocally === "function" && opts.data?.rgPlayerId
@@ -286,7 +290,7 @@ export async function atlasSetDoc(fb, label, ref, data, options) {
             const keyDiff = payloadKeyDiff(label, stamped);
             const reasons = describeDenyReasons(label, stamped, { docId });
             const likelyCauses = classifyDeny(e, {
-                ac, acc, keyDiff, data: stamped, label,
+                ac, acc, keyDiff, data: stamped, label, merge: !!options?.merge,
             });
             logDeny(label, {
                 op: "write",
