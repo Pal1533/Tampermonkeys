@@ -95,6 +95,24 @@ export function classifyDeny(err, opts = {}) {
         causes.push("Firestore quota exhausted (project-level cap tripped)");
     }
     if (code === "unauthenticated") causes.push("Firebase auth token missing or rejected");
+    // Server-side gates the payload cannot self-inspect. Only surface as
+    // hints when the client-side checks all passed but the deny persists,
+    // so we do not drown the record in speculative reasons for real bugs.
+    const noClientCause = causes.length === 0
+        && (!opts.keyDiff?.missing?.length)
+        && (!opts.keyDiff?.unexpected?.length);
+    if (noClientCause && String(opts.label || "").includes("script_submissions")) {
+        try {
+            if (typeof isFlaggedLocally === "function" && opts.data?.rgPlayerId
+                && isFlaggedLocally(opts.data.rgPlayerId)) {
+                causes.push("local win-limits store flagged — server likely still has reviewFlagged=true on script_submissions/{uid}. Admin must click 'Clear review' on the leaderboard site.");
+            }
+        } catch {}
+        causes.push("server-side gate the client can't verify: notUnderReview (reviewFlagged), respectsWriteInterval (15s between writes), or hasScriptSubmission");
+    }
+    if (noClientCause && String(opts.label || "").includes("leaderboard")) {
+        causes.push("server-side gate the client can't verify: notUnderReview, respectsWriteInterval, hasScriptSubmission (script_submissions row must exist first), or MMR/matches delta caps");
+    }
     return causes;
 }
 
