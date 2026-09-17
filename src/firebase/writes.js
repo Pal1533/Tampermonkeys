@@ -5,7 +5,7 @@ export function appCheckSnapshot() {
     if (!_lastAppCheckToken) {
         return { present: false, note: "no token minted yet" };
     }
-    const { mintedAt, expireTimeMillis, len, error } = _lastAppCheckToken;
+    const { mintedAt, expireTimeMillis, workerExpMillis, jwtExpMillis, len, error } = _lastAppCheckToken;
     const ageMs = mintedAt ? now - mintedAt : null;
     const ttlMsLeft = expireTimeMillis ? expireTimeMillis - now : null;
     return {
@@ -15,6 +15,11 @@ export function appCheckSnapshot() {
         ageMs,
         ttlMsLeft,
         expired: ttlMsLeft != null ? ttlMsLeft <= 0 : null,
+        // Both raw sources so we can tell whether the Worker returned
+        // expireTimeMillis or we fell back to the JWT exp claim.
+        workerExpMs: workerExpMillis || null,
+        jwtExpMs: jwtExpMillis || null,
+        expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
     };
 }
 

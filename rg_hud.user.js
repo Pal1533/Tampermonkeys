@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      27.5
+// @version      27.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -3793,6 +3793,30 @@ function syncForgeFromLogin(loginData) {
 
 // src/firebase/auth.js
 
+// Parse an App Check JWT and return its `exp` claim as an epoch-ms
+// timestamp. Used as a fallback when the Worker forgets to include
+// expireTimeMillis in the /mint response, so the Firebase SDK always
+// has a real refresh deadline. Returns null on any parse failure —
+// non-fatal, the caller degrades to whatever the Worker provided.
+function extractJwtExpMillis(token) {
+    try {
+        if (typeof token !== "string") return null;
+        const parts = token.split(".");
+        if (parts.length < 2) return null;
+        // base64url → base64
+        let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4) b64 += "=";
+        const json = atob(b64);
+        const payload = JSON.parse(json);
+        const exp = Number(payload && payload.exp);
+        if (!Number.isFinite(exp) || exp <= 0) return null;
+        return exp * 1000;
+    } catch {
+        return null;
+    }
+}
+
+
 function atlasTmStorage() {
     if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function") return null;
     return {
@@ -4079,14 +4103,24 @@ async function initFirebaseInner() {
                             throw new Error(msg);
                         }
                         const data = await resp.json();
-                        dbg("AppCheck: token minted via Worker (len=" + (data.token?.length || 0) + ")");
+                        // Parse the JWT's own exp claim as a fallback in case
+                        // the Worker forgets to return expireTimeMillis, so
+                        // the Firebase SDK still knows when to refresh.
+                        const jwtExpMillis = extractJwtExpMillis(data.token);
+                        const workerExpMillis = Number(data.expireTimeMillis) || null;
+                        const effectiveExpMillis = workerExpMillis || jwtExpMillis || null;
+                        dbg("AppCheck: token minted via Worker (len=" + (data.token?.length || 0)
+                            + ", workerExpMs=" + (workerExpMillis || "missing")
+                            + ", jwtExpMs=" + (jwtExpMillis || "unparsable") + ")");
                         _lastAppCheckToken = {
                             mintedAt: Date.now(),
-                            expireTimeMillis: Number(data.expireTimeMillis) || null,
+                            expireTimeMillis: effectiveExpMillis,
+                            workerExpMillis,
+                            jwtExpMillis,
                             len: data.token?.length || 0,
                             error: null,
                         };
-                        return { token: data.token, expireTimeMillis: data.expireTimeMillis };
+                        return { token: data.token, expireTimeMillis: effectiveExpMillis };
                     },
                 }),
                 isTokenAutoRefreshEnabled: true,
@@ -4318,7 +4352,7 @@ function appCheckSnapshot() {
     if (!_lastAppCheckToken) {
         return { present: false, note: "no token minted yet" };
     }
-    const { mintedAt, expireTimeMillis, len, error } = _lastAppCheckToken;
+    const { mintedAt, expireTimeMillis, workerExpMillis, jwtExpMillis, len, error } = _lastAppCheckToken;
     const ageMs = mintedAt ? now - mintedAt : null;
     const ttlMsLeft = expireTimeMillis ? expireTimeMillis - now : null;
     return {
@@ -4328,6 +4362,11 @@ function appCheckSnapshot() {
         ageMs,
         ttlMsLeft,
         expired: ttlMsLeft != null ? ttlMsLeft <= 0 : null,
+        // Both raw sources so we can tell whether the Worker returned
+        // expireTimeMillis or we fell back to the JWT exp claim.
+        workerExpMs: workerExpMillis || null,
+        jwtExpMs: jwtExpMillis || null,
+        expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
     };
 }
 
@@ -14336,7 +14375,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "27.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

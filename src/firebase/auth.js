@@ -1,4 +1,28 @@
 
+// Parse an App Check JWT and return its `exp` claim as an epoch-ms
+// timestamp. Used as a fallback when the Worker forgets to include
+// expireTimeMillis in the /mint response, so the Firebase SDK always
+// has a real refresh deadline. Returns null on any parse failure —
+// non-fatal, the caller degrades to whatever the Worker provided.
+export function extractJwtExpMillis(token) {
+    try {
+        if (typeof token !== "string") return null;
+        const parts = token.split(".");
+        if (parts.length < 2) return null;
+        // base64url → base64
+        let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4) b64 += "=";
+        const json = atob(b64);
+        const payload = JSON.parse(json);
+        const exp = Number(payload && payload.exp);
+        if (!Number.isFinite(exp) || exp <= 0) return null;
+        return exp * 1000;
+    } catch {
+        return null;
+    }
+}
+
+
 export function atlasTmStorage() {
     if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function") return null;
     return {
@@ -285,14 +309,24 @@ export async function initFirebaseInner() {
                             throw new Error(msg);
                         }
                         const data = await resp.json();
-                        dbg("AppCheck: token minted via Worker (len=" + (data.token?.length || 0) + ")");
+                        // Parse the JWT's own exp claim as a fallback in case
+                        // the Worker forgets to return expireTimeMillis, so
+                        // the Firebase SDK still knows when to refresh.
+                        const jwtExpMillis = extractJwtExpMillis(data.token);
+                        const workerExpMillis = Number(data.expireTimeMillis) || null;
+                        const effectiveExpMillis = workerExpMillis || jwtExpMillis || null;
+                        dbg("AppCheck: token minted via Worker (len=" + (data.token?.length || 0)
+                            + ", workerExpMs=" + (workerExpMillis || "missing")
+                            + ", jwtExpMs=" + (jwtExpMillis || "unparsable") + ")");
                         _lastAppCheckToken = {
                             mintedAt: Date.now(),
-                            expireTimeMillis: Number(data.expireTimeMillis) || null,
+                            expireTimeMillis: effectiveExpMillis,
+                            workerExpMillis,
+                            jwtExpMillis,
                             len: data.token?.length || 0,
                             error: null,
                         };
-                        return { token: data.token, expireTimeMillis: data.expireTimeMillis };
+                        return { token: data.token, expireTimeMillis: effectiveExpMillis };
                     },
                 }),
                 isTokenAutoRefreshEnabled: true,
