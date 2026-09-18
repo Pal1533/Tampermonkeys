@@ -60,16 +60,34 @@ jobs:
       - name: Unit-test cache builder
         run: npm run test:leaderboard-cache
 
+      # CDC state so most runs read 0 rows when nothing changed.
+      # Unique save key + prefix restore = every run saves fresh state,
+      # every run picks up the newest one. Cache miss = one full scan.
+      - name: Restore CDC state
+        uses: actions/cache/restore@v4
+        with:
+          path: firebase/.cdc-state
+          key: leaderboard-cdc-state-v1-
+          restore-keys: |
+            leaderboard-cdc-state-v1-
+
       - name: Build leaderboard aggregates
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
           set -euo pipefail
-          args=(--project "$FIREBASE_PROJECT")
+          args=(--project "$FIREBASE_PROJECT" --state-dir .cdc-state)
           if [[ "$DRY_RUN" != "true" ]]; then
             args+=(--apply)
           fi
           npm run build:leaderboard-cache -- "${args[@]}"
+
+      - name: Save CDC state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: firebase/.cdc-state
+          key: leaderboard-cdc-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload security artifacts
         if: always()
