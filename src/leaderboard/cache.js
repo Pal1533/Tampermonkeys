@@ -132,11 +132,18 @@ export function derivedFormatFromPlayerCount(n) {
 
 
 export function parseRosterInitLine(line) {
-    const outer = String(line ?? "").match(
-        /Initialized stats for player\s*:?\s*(.*?)\s*\(([^)]*\bUserId:\s*[^)]*)\)/
-    );
-    if (!outer) return null;
-    const details = outer[2];
+    // no regex — 10k-char nicknames with lots of parens hit catastrophic
+    // backtracking on the old lazy .*? pattern, dropping those players
+    // from the roster. linear scan from the right instead.
+    const s = String(line ?? "");
+    const prefix = "Initialized stats for player";
+    const prefixIdx = s.indexOf(prefix);
+    if (prefixIdx < 0) return null;
+    const uidTagIdx = s.lastIndexOf("(UserId:");
+    if (uidTagIdx <= prefixIdx) return null;
+    const closeIdx = s.indexOf(")", uidTagIdx);
+    if (closeIdx < 0) return null;
+    const details = s.substring(uidTagIdx + 1, closeIdx);
     const uidMatch = details.match(/\bUserId:\s*([^,]*)/i);
     if (!uidMatch) return null;
     const teamMatch = details.match(/\bTeam:\s*([A-Za-z]+)/i);
@@ -144,8 +151,10 @@ export function parseRosterInitLine(line) {
     const team = /^orange$/i.test(rawTeam) ? "Orange"
         : /^blue$/i.test(rawTeam) ? "Blue"
         : rawTeam || null;
+    let nameStart = prefixIdx + prefix.length;
+    while (nameStart < uidTagIdx && (s[nameStart] === " " || s[nameStart] === ":")) nameStart++;
     return {
-        name: (outer[1] ?? "").trim(),
+        name: s.substring(nameStart, uidTagIdx).trim(),
         uid: (uidMatch[1] ?? "").trim(),
         team,
     };
