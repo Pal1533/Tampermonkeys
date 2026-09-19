@@ -274,6 +274,7 @@ export async function initFirebaseInner() {
         // signs App Check tokens for allowlisted anonymous uids instead.
         const { initializeAppCheck, CustomProvider, getToken: getAppCheckToken } =
             await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js");
+        _atlasAppCheckGetToken = getAppCheckToken;
         const APP_CHECK_WORKER_URL = "https://atlas-appcheck.therootedengineer.workers.dev/mint";
 
         const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
@@ -325,6 +326,7 @@ export async function initFirebaseInner() {
                 isTokenAutoRefreshEnabled: true,
             });
             dbg("AppCheck: CustomProvider registered");
+            _atlasAppCheckHandle = atlasAppCheckHandle;
         } catch (err) {
             dbg("AppCheck: init THREW — " + getErrMsg(err));
         }

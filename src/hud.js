@@ -231,7 +231,7 @@ export function bootAtlas() {
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -403,6 +403,8 @@ export function bootAtlas() {
     let firebaseAuthError = null;
     // { mintedAt, expireTimeMillis, workerExpMillis, jwtExpMillis, len, error }
     let _lastAppCheckToken = null;
+    let _atlasAppCheckHandle = null;
+    let _atlasAppCheckGetToken = null;
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;

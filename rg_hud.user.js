@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.1
+// @version      30.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -4141,6 +4141,7 @@ async function initFirebaseInner() {
         // signs App Check tokens for allowlisted anonymous uids instead.
         const { initializeAppCheck, CustomProvider, getToken: getAppCheckToken } =
             await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js");
+        _atlasAppCheckGetToken = getAppCheckToken;
         const APP_CHECK_WORKER_URL = "https://atlas-appcheck.therootedengineer.workers.dev/mint";
 
         const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
@@ -4192,6 +4193,7 @@ async function initFirebaseInner() {
                 isTokenAutoRefreshEnabled: true,
             });
             dbg("AppCheck: CustomProvider registered");
+            _atlasAppCheckHandle = atlasAppCheckHandle;
         } catch (err) {
             dbg("AppCheck: init THREW — " + getErrMsg(err));
         }
@@ -4411,6 +4413,24 @@ async function ensureAnonymousAuth(auth) {
 }
 
 // src/firebase/writes.js
+// forceRefresh when the cached token is expired or within 60s of expiry.
+// Idle HUD sessions (private matches, backgrounded tabs) let the SDK's
+// auto-refresh drift past the JWT exp; the next Firestore write then uses
+// a dead token and denies.
+async function ensureFreshAppCheckToken() {
+    if (!_atlasAppCheckHandle || typeof _atlasAppCheckGetToken !== "function") return;
+    const s = appCheckSnapshot();
+    if (!s.present) return;
+    const stale = s.expired === true
+        || (typeof s.ttlMsLeft === "number" && s.ttlMsLeft < 60000);
+    if (!stale) return;
+    try {
+        await _atlasAppCheckGetToken(_atlasAppCheckHandle, true);
+    } catch (err) {
+        dbg("proactive AppCheck refresh failed: " + (err?.message || String(err)));
+    }
+}
+
 function appCheckSnapshot() {
     const now = Date.now();
     if (!_lastAppCheckToken) {
@@ -4679,6 +4699,7 @@ async function atlasSetDoc(fb, label, ref, data, options) {
         return false;
     }
     if (!(await atlasMutationAllowed(fb, label))) return false;
+    await ensureFreshAppCheckToken();
     logWrite(label);
     const stamped = atlasStampedMutationData(ref, data);
     const startedAt = Date.now();
@@ -14455,7 +14476,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -14627,6 +14648,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let firebaseAuthError = null;
     // { mintedAt, expireTimeMillis, workerExpMillis, jwtExpMillis, len, error }
     let _lastAppCheckToken = null;
+    let _atlasAppCheckHandle = null;
+    let _atlasAppCheckGetToken = null;
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;

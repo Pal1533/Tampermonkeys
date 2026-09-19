@@ -1,3 +1,21 @@
+// forceRefresh when the cached token is expired or within 60s of expiry.
+// Idle HUD sessions (private matches, backgrounded tabs) let the SDK's
+// auto-refresh drift past the JWT exp; the next Firestore write then uses
+// a dead token and denies.
+export async function ensureFreshAppCheckToken() {
+    if (!_atlasAppCheckHandle || typeof _atlasAppCheckGetToken !== "function") return;
+    const s = appCheckSnapshot();
+    if (!s.present) return;
+    const stale = s.expired === true
+        || (typeof s.ttlMsLeft === "number" && s.ttlMsLeft < 60000);
+    if (!stale) return;
+    try {
+        await _atlasAppCheckGetToken(_atlasAppCheckHandle, true);
+    } catch (err) {
+        dbg("proactive AppCheck refresh failed: " + (err?.message || String(err)));
+    }
+}
+
 export function appCheckSnapshot() {
     const now = Date.now();
     if (!_lastAppCheckToken) {
@@ -266,6 +284,7 @@ export async function atlasSetDoc(fb, label, ref, data, options) {
         return false;
     }
     if (!(await atlasMutationAllowed(fb, label))) return false;
+    await ensureFreshAppCheckToken();
     logWrite(label);
     const stamped = atlasStampedMutationData(ref, data);
     const startedAt = Date.now();
