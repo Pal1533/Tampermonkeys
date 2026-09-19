@@ -139,6 +139,16 @@ test("clan and popup helpers live in source modules", () => {
     )?.uid,
     "abc",
   );
+  // regression: 10k-char nickname with tons of parens used to hang on the
+  // old backtracking regex and drop the player from the roster.
+  const monster = "(".repeat(5000) + "AAA" + ")".repeat(5000);
+  const t0 = performance.now();
+  const parsed = parseRosterInitLineFromModule(
+    `[PlayerDataManager] Initialized stats for player: ${monster} (UserId: bigid, Team: Orange)`,
+  );
+  assert.equal(parsed?.uid, "bigid");
+  assert.equal(parsed?.team, "Orange");
+  assert.ok(performance.now() - t0 < 100, "parseRosterInitLine should be linear, not backtracking");
   assert.equal(isAtlasAdSrcFromModule("https://imasdk.googleapis.com/x.js"), true);
   assert.equal(glickoOfFromModule({ ModesGlicko: { Casual: { rd: 80 } } }, "Casual").rd, 80);
 });
