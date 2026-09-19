@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.3
+// @version      30.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -10334,6 +10334,16 @@ function esc(s) {
 }
 
 // src/name-forge/raw.js
+// module-scope so rawSnapshotFields doesn't reach into createNameForge
+function alignFromRawInline(raw) {
+  const value = String(raw ?? "");
+  const marked = value.match(/<rgnf-align=(left|center|right)>/i);
+  if (marked) return marked[1].toLowerCase();
+  const m = value.match(/<align\s*=\s*(left|center|right)>/i);
+  if (m) return m[1].toLowerCase();
+  return "left";
+}
+
 function editableTextFromRaw(raw) {
   return String(raw ?? "")
     .replace(/<color=#00000000>\.*<\/color>/gi, "")
@@ -10437,7 +10447,7 @@ function rawSnapshotFields(raw) {
     titleUnderline: false,
     titleStrike: false,
     titleAlpha: 255,
-    align: alignFromRaw(scored.rawCode),
+    align: alignFromRawInline(scored.rawCode),
     scoredMode: scored.scoredMode,
     ...(scored.scoredSizePct ? { scoredSizePct: scored.scoredSizePct } : {}),
     ...(scored.scoredColor ? { scoredColor: scored.scoredColor } : {}),
@@ -14485,7 +14495,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
