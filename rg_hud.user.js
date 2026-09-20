@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.6
+// @version      30.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -3393,7 +3393,8 @@ function createHUD() {
         try {
             const trimmedPlayer = lastKnownPlayerData ? {
                 Id: lastKnownPlayerData.Id,
-                Nickname: lastKnownPlayerData.Nickname,
+                Nickname: _truncateNickname(lastKnownPlayerData.Nickname || ""),
+                NicknameLength: (lastKnownPlayerData.Nickname || "").length,
                 ModesGlicko: lastKnownPlayerData.ModesGlicko,
                 ModesData: lastKnownPlayerData.ModesData,
             } : null;
@@ -3461,9 +3462,10 @@ function createHUD() {
                 const raw = lastKnownPlayerData?.Nickname || "";
                 const tagPfx = (typeof getClanTagPrefix === "function" ? getClanTagPrefix() : "");
                 return {
-                    rawNickname: raw, rawLength: raw.length,
-                    runtimeClanTagPrefix: tagPfx,
-                    baselineDisplayName: (typeof deriveDisplayName === "function" ? deriveDisplayName(raw) : null),
+                    rawNicknamePreview: _truncateNickname(raw),
+                    rawNicknameLength: raw.length,
+                    runtimeClanTagPrefix: _truncateNickname(tagPfx || ""),
+                    hasRuntimeClanTagPrefix: !!tagPfx,
                 };
             })();
             const clanCrossCheck = {
@@ -4842,8 +4844,7 @@ function describeWriteSubject(label, data) {
     if (!data || typeof data !== "object") return "";
     const parts = [];
     if (data.playlist) parts.push(`playlist=${String(data.playlist)}`);
-    if (data.Nickname) parts.push(`Nickname="${String(data.Nickname).slice(0, 40)}"`);
-    else if (data.name) parts.push(`name="${String(data.name).slice(0, 40)}"`);
+    if (data.name) parts.push(`name="${String(data.name).slice(0, 40)}"`);
     if (data.tag) parts.push(`tag=${String(data.tag).slice(0, 16)}`);
     if (data.role) parts.push(`role=${String(data.role).slice(0, 24)}`);
     if (data.clanId) parts.push(`clanId=${String(data.clanId).slice(0, 32)}`);
@@ -14510,18 +14511,32 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // Firestore's serverResponse — everything needed to diagnose without
     // having to guess.
     const _rgWriteBuf = [];
+    // TMP-tagged nicknames are hundreds of chars of color codes; truncate.
+    const _NICKNAME_KEYS = new Set(["nickname", "Nickname"]);
+    const _NICKNAME_PREVIEW_CHARS = 100;
+    function _truncateNickname(s) {
+        return s.length > _NICKNAME_PREVIEW_CHARS
+            ? `${s.slice(0, _NICKNAME_PREVIEW_CHARS)}<truncated:total=${s.length}>`
+            : s;
+    }
     function _sanitizeWriteValue(v) {
         if (v === null || v === undefined) return v;
         if (typeof v === "number" || typeof v === "boolean") return v;
         if (typeof v === "string") return v.length > 512 ? `<str:len=${v.length}>` : v;
         if (Array.isArray(v)) return `<array:len=${v.length}>`;
         if (typeof v === "object") {
-            // serverTimestamp() etc are SDK sentinels — mark them so we can see they were used
             if (v.constructor && v.constructor.name && v.constructor.name !== "Object") {
                 return `<${v.constructor.name}>`;
             }
             const out = {};
-            for (const k of Object.keys(v)) out[k] = _sanitizeWriteValue(v[k]);
+            for (const k of Object.keys(v)) {
+                const val = v[k];
+                if (_NICKNAME_KEYS.has(k) && typeof val === "string") {
+                    out[k] = _truncateNickname(val);
+                } else {
+                    out[k] = _sanitizeWriteValue(val);
+                }
+            }
             return out;
         }
         return `<${typeof v}>`;
@@ -14652,7 +14667,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

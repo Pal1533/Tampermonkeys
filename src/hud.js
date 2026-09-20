@@ -89,18 +89,32 @@ export function bootAtlas() {
     // Firestore's serverResponse — everything needed to diagnose without
     // having to guess.
     const _rgWriteBuf = [];
+    // TMP-tagged nicknames are hundreds of chars of color codes; truncate.
+    const _NICKNAME_KEYS = new Set(["nickname", "Nickname"]);
+    const _NICKNAME_PREVIEW_CHARS = 100;
+    function _truncateNickname(s) {
+        return s.length > _NICKNAME_PREVIEW_CHARS
+            ? `${s.slice(0, _NICKNAME_PREVIEW_CHARS)}<truncated:total=${s.length}>`
+            : s;
+    }
     function _sanitizeWriteValue(v) {
         if (v === null || v === undefined) return v;
         if (typeof v === "number" || typeof v === "boolean") return v;
         if (typeof v === "string") return v.length > 512 ? `<str:len=${v.length}>` : v;
         if (Array.isArray(v)) return `<array:len=${v.length}>`;
         if (typeof v === "object") {
-            // serverTimestamp() etc are SDK sentinels — mark them so we can see they were used
             if (v.constructor && v.constructor.name && v.constructor.name !== "Object") {
                 return `<${v.constructor.name}>`;
             }
             const out = {};
-            for (const k of Object.keys(v)) out[k] = _sanitizeWriteValue(v[k]);
+            for (const k of Object.keys(v)) {
+                const val = v[k];
+                if (_NICKNAME_KEYS.has(k) && typeof val === "string") {
+                    out[k] = _truncateNickname(val);
+                } else {
+                    out[k] = _sanitizeWriteValue(val);
+                }
+            }
             return out;
         }
         return `<${typeof v}>`;
@@ -231,7 +245,7 @@ export function bootAtlas() {
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

@@ -272,8 +272,7 @@ export function describeWriteSubject(label, data) {
     if (!data || typeof data !== "object") return "";
     const parts = [];
     if (data.playlist) parts.push(`playlist=${String(data.playlist)}`);
-    if (data.Nickname) parts.push(`Nickname="${String(data.Nickname).slice(0, 40)}"`);
-    else if (data.name) parts.push(`name="${String(data.name).slice(0, 40)}"`);
+    if (data.name) parts.push(`name="${String(data.name).slice(0, 40)}"`);
     if (data.tag) parts.push(`tag=${String(data.tag).slice(0, 16)}`);
     if (data.role) parts.push(`role=${String(data.role).slice(0, 24)}`);
     if (data.clanId) parts.push(`clanId=${String(data.clanId).slice(0, 32)}`);

@@ -1413,7 +1413,8 @@ export function createHUD() {
         try {
             const trimmedPlayer = lastKnownPlayerData ? {
                 Id: lastKnownPlayerData.Id,
-                Nickname: lastKnownPlayerData.Nickname,
+                Nickname: _truncateNickname(lastKnownPlayerData.Nickname || ""),
+                NicknameLength: (lastKnownPlayerData.Nickname || "").length,
                 ModesGlicko: lastKnownPlayerData.ModesGlicko,
                 ModesData: lastKnownPlayerData.ModesData,
             } : null;
@@ -1481,9 +1482,10 @@ export function createHUD() {
                 const raw = lastKnownPlayerData?.Nickname || "";
                 const tagPfx = (typeof getClanTagPrefix === "function" ? getClanTagPrefix() : "");
                 return {
-                    rawNickname: raw, rawLength: raw.length,
-                    runtimeClanTagPrefix: tagPfx,
-                    baselineDisplayName: (typeof deriveDisplayName === "function" ? deriveDisplayName(raw) : null),
+                    rawNicknamePreview: _truncateNickname(raw),
+                    rawNicknameLength: raw.length,
+                    runtimeClanTagPrefix: _truncateNickname(tagPfx || ""),
+                    hasRuntimeClanTagPrefix: !!tagPfx,
                 };
             })();
             const clanCrossCheck = {
