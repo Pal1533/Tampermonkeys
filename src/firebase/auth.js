@@ -374,10 +374,16 @@ export async function initFirebaseInner() {
                     const tokLen = result?.token?.length || 0;
                     if (tokLen > 0) {
                         dbg("AppCheck: initial fetch ok (len=" + tokLen + ")");
+                        // SDK result has no expireTimeMillis; fall back to
+                        // JWT exp so ensureFreshAppCheckToken has a deadline.
                         if (!_lastAppCheckToken || !_lastAppCheckToken.mintedAt) {
+                            const jwtExpMillis = extractJwtExpMillis(result?.token);
+                            const workerExpMillis = Number(result?.expireTimeMillis) || null;
                             _lastAppCheckToken = {
                                 mintedAt: Date.now(),
-                                expireTimeMillis: Number(result?.expireTimeMillis) || null,
+                                expireTimeMillis: workerExpMillis || jwtExpMillis || null,
+                                workerExpMillis,
+                                jwtExpMillis,
                                 len: tokLen,
                                 error: null,
                             };

@@ -348,6 +348,8 @@ export async function atlasDeleteDoc(fb, label, ref) {
 
 export async function runAtlasTransaction(fb, label, callback) {
     if (!(await atlasMutationAllowed(fb, label))) return false;
+    // tx.get denies on a stale token before any write runs.
+    await ensureFreshAppCheckToken();
     await fb.runTransaction(fb.db, async transaction => {
         const counted = {
             get: async ref => {

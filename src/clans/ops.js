@@ -415,6 +415,9 @@ export async function attachClanListener() {
         detachClanListener();
         const fb = await initFirebase();
         if (!fb || !myClan) return;
+        // idle tabs drift past the App Check exp; long-lived listeners die silently.
+        await ensureFreshAppCheckToken();
+        if (!myClan) return;
         const clanId = myClan.id;
         _clanListenerId = clanId;
         _clanUnsub = fb.onSnapshot(

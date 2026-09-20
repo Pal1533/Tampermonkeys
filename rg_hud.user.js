@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.4
+// @version      30.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -4250,10 +4250,16 @@ async function initFirebaseInner() {
                     const tokLen = result?.token?.length || 0;
                     if (tokLen > 0) {
                         dbg("AppCheck: initial fetch ok (len=" + tokLen + ")");
+                        // SDK result has no expireTimeMillis; fall back to
+                        // JWT exp so ensureFreshAppCheckToken has a deadline.
                         if (!_lastAppCheckToken || !_lastAppCheckToken.mintedAt) {
+                            const jwtExpMillis = extractJwtExpMillis(result?.token);
+                            const workerExpMillis = Number(result?.expireTimeMillis) || null;
                             _lastAppCheckToken = {
                                 mintedAt: Date.now(),
-                                expireTimeMillis: Number(result?.expireTimeMillis) || null,
+                                expireTimeMillis: workerExpMillis || jwtExpMillis || null,
+                                workerExpMillis,
+                                jwtExpMillis,
                                 len: tokLen,
                                 error: null,
                             };
@@ -4772,6 +4778,8 @@ async function atlasDeleteDoc(fb, label, ref) {
 
 async function runAtlasTransaction(fb, label, callback) {
     if (!(await atlasMutationAllowed(fb, label))) return false;
+    // tx.get denies on a stale token before any write runs.
+    await ensureFreshAppCheckToken();
     await fb.runTransaction(fb.db, async transaction => {
         const counted = {
             get: async ref => {
@@ -7099,6 +7107,9 @@ async function attachClanListener() {
         detachClanListener();
         const fb = await initFirebase();
         if (!fb || !myClan) return;
+        // idle tabs drift past the App Check exp; long-lived listeners die silently.
+        await ensureFreshAppCheckToken();
+        if (!myClan) return;
         const clanId = myClan.id;
         _clanListenerId = clanId;
         _clanUnsub = fb.onSnapshot(
@@ -14495,7 +14506,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
