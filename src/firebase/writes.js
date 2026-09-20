@@ -1,7 +1,4 @@
 // forceRefresh when the cached token is expired or within 60s of expiry.
-// Idle HUD sessions (private matches, backgrounded tabs) let the SDK's
-// auto-refresh drift past the JWT exp; the next Firestore write then uses
-// a dead token and denies.
 export async function ensureFreshAppCheckToken() {
     if (!_atlasAppCheckHandle || typeof _atlasAppCheckGetToken !== "function") return;
     const s = appCheckSnapshot();
@@ -14,6 +11,13 @@ export async function ensureFreshAppCheckToken() {
     } catch (err) {
         dbg("proactive AppCheck refresh failed: " + (err?.message || String(err)));
     }
+}
+
+export function isPermissionDenied(e) {
+    if (!e) return false;
+    const code = String(e.code || "");
+    if (code.includes("permission-denied")) return true;
+    return /permission[- ]denied|insufficient permissions/i.test(String(e.message || ""));
 }
 
 export function appCheckSnapshot() {
@@ -299,10 +303,12 @@ export async function atlasSetDoc(fb, label, ref, data, options) {
     try {
         if (options === undefined) await fb.setDoc(ref, stamped);
         else await fb.setDoc(ref, stamped, options);
+        _lastWriteAtByLabel[label] = Date.now();
+        if (typeof clearTriangleCount === "function") clearTriangleCount();
         _pushWriteAttempt({ ...attempt, ok: true, latencyMs: Date.now() - startedAt });
         return true;
     } catch (e) {
-        if (e && String(e.code || "").includes("permission-denied")) {
+        if (isPermissionDenied(e)) {
             const docId = ref && ref.id;
             const ac = appCheckSnapshot();
             const acc = accessSnapshot();

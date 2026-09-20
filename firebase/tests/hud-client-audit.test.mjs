@@ -497,17 +497,19 @@ test("Firebase id row retries auth instead of staying on signing in", () => {
   assert.doesNotMatch(initSource, /sign-in timed out/);
 });
 
-test("HUD errors tell the player to message RIS3N or Pal on Discord", () => {
+test("HUD errors nudge a refresh first and mention Discord in the tooltip hint", () => {
   const formatAtlasError = extractHudFunction("formatAtlasError");
   assert.equal(
     formatAtlasError("Stats submission failed -- check console"),
-    "Stats submission failed, message RIS3N or Pal on Discord",
+    "Stats submission failed",
   );
   assert.equal(
     formatAtlasError("Firebase failed to load"),
-    "Firebase failed to load, message RIS3N or Pal on Discord",
+    "Firebase failed to load",
   );
   assert.match(hudFunctionSource("showError"), /formatAtlasError\(/);
+  assert.match(hudSource, /Try refreshing the page/);
+  assert.match(hudSource, /RIS3N or Pal on Discord/);
 });
 
 test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {

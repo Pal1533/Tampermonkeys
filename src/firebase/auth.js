@@ -1,4 +1,12 @@
 
+// ring buffer push for App Check mint history
+export function pushAppCheckHistory(entry) {
+    if (typeof _appCheckHistory === "undefined") return;
+    _appCheckHistory.push({ at: Date.now(), ...entry });
+    if (_appCheckHistory.length > 20) _appCheckHistory.shift();
+}
+
+
 // fallback for when the Worker forgets expireTimeMillis
 export function extractJwtExpMillis(token) {
     try {
@@ -303,6 +311,7 @@ export async function initFirebaseInner() {
                                 len: 0,
                                 error: msg,
                             };
+                            pushAppCheckHistory({ source: "worker", ok: false, status: resp.status, error: msg });
                             throw new Error(msg);
                         }
                         const data = await resp.json();
@@ -320,6 +329,11 @@ export async function initFirebaseInner() {
                             len: data.token?.length || 0,
                             error: null,
                         };
+                        pushAppCheckHistory({
+                            source: "worker", ok: true, len: data.token?.length || 0,
+                            expireTimeMillis: effectiveExpMillis, workerExpMillis, jwtExpMillis,
+                            expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
+                        });
                         return { token: data.token, expireTimeMillis: effectiveExpMillis };
                     },
                 }),
@@ -387,6 +401,11 @@ export async function initFirebaseInner() {
                                 len: tokLen,
                                 error: null,
                             };
+                            pushAppCheckHistory({
+                                source: "sdk-cache", ok: true, len: tokLen,
+                                expireTimeMillis: workerExpMillis || jwtExpMillis || null,
+                                expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
+                            });
                         }
                     } else {
                         dbg("AppCheck: initial fetch returned empty");
@@ -396,6 +415,7 @@ export async function initFirebaseInner() {
                             len: 0,
                             error: "empty result",
                         };
+                        pushAppCheckHistory({ source: "initial-fetch", ok: false, error: "empty result" });
                     }
                 },
                 (err) => {
@@ -407,6 +427,7 @@ export async function initFirebaseInner() {
                         len: 0,
                         error: msg,
                     };
+                    pushAppCheckHistory({ source: "initial-fetch", ok: false, error: msg });
                 },
             );
         }

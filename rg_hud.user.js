@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.5
+// @version      30.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2000,9 +2000,7 @@ function formatAtlasError(message) {
     const raw = String(message || "Something failed").trim()
         .replace(/\s*(?:—|--).*$/, "")
         .replace(/\.+$/, "");
-    const head = /fail/i.test(raw) ? raw : `${raw} failed`;
-    if (/Discord/i.test(head)) return head;
-    return `${head}, message RIS3N or Pal on Discord`;
+    return /fail/i.test(raw) ? raw : `${raw} failed`;
 }
 
 
@@ -2261,11 +2259,50 @@ function setAutoVisible(visible) {
 }
 
 
+const TRIANGLE_COUNT_KEY = "rgHudTriangleRefreshCount";
+const TRIANGLE_WINDOW_MS = 15 * 60 * 1000;
+
+function readTriangleCount() {
+    try {
+        const raw = localStorage.getItem(TRIANGLE_COUNT_KEY);
+        if (!raw) return { n: 0, lastAt: 0 };
+        const v = JSON.parse(raw);
+        if (!v || typeof v.n !== "number") return { n: 0, lastAt: 0 };
+        if (Date.now() - (v.lastAt || 0) > TRIANGLE_WINDOW_MS) return { n: 0, lastAt: 0 };
+        return v;
+    } catch { return { n: 0, lastAt: 0 }; }
+}
+
+function bumpTriangleCount() {
+    const cur = readTriangleCount();
+    // one bump per HUD session, not per error
+    if (_triangleBumpedThisSession) return cur;
+    _triangleBumpedThisSession = true;
+    const next = { n: cur.n + 1, lastAt: Date.now() };
+    try { localStorage.setItem(TRIANGLE_COUNT_KEY, JSON.stringify(next)); } catch {}
+    return next;
+}
+
+function clearTriangleCount() {
+    try { localStorage.removeItem(TRIANGLE_COUNT_KEY); } catch {}
+    _triangleBumpedThisSession = false;
+}
+
+let _triangleBumpedThisSession = false;
+
+function triangleRefreshHint(n) {
+    if (n <= 1) return "Try refreshing the page (Cmd/Ctrl+R). This clears most stale-token errors.";
+    if (n === 2) return "Still failing after a refresh. Give it one more try — App Check sometimes needs a second refresh.";
+    if (n === 3) return "Third failure across refreshes. Refresh one more time; if the triangle comes back, download the debug bundle in Settings and message RIS3N or Pal on Discord.";
+    return "Persistent error after multiple refreshes. Download the debug bundle in Settings and send it to RIS3N or Pal on Discord.";
+}
+
 function showError(message) {
     const text = formatAtlasError(message);
     const dot = document.getElementById("rgErrDot");
     if (!dot) return;
     dot.style.display = "inline";
+    const counter = bumpTriangleCount();
 
     // dedupe by origin+message so four identical rows collapse to one row x4
     const seen = new Map();
@@ -2293,7 +2330,7 @@ function showError(message) {
         dot.addEventListener("mouseleave", () => { tip.style.opacity = "0"; tip.style.pointerEvents = "none"; });
     }
     dot.removeAttribute("title");
-    tip.innerHTML = renderErrorTooltipHtml(text, rows);
+    tip.innerHTML = renderErrorTooltipHtml(text, rows, counter.n);
     if (tip.matches(":hover")) positionErrorTooltip(dot, tip);
 }
 
@@ -2315,6 +2352,7 @@ function ensureErrorTooltipStyles() {
         .rgErrTip .rgErrMsg{color:#ffe0e0;overflow-wrap:anywhere;}
         .rgErrTip .rgErrCount{color:#ff8b8b;font-weight:600;flex-shrink:0;}
         .rgErrTip .rgErrHint{margin-top:8px;color:#a89898;font-size:11px;font-style:italic;}
+        .rgErrTip .rgErrBadge{margin-left:8px;padding:1px 6px;border-radius:8px;background:#3a1414;border:1px solid #ff6b6b;color:#ffb0b0;font-size:10px;font-weight:600;letter-spacing:.04em;}
     `;
     document.head.appendChild(style);
     const dot = document.getElementById("rgErrDot");
@@ -2328,7 +2366,7 @@ function ensureErrorTooltipStyles() {
     }
 }
 
-function renderErrorTooltipHtml(head, rows) {
+function renderErrorTooltipHtml(head, rows, refreshCount) {
     const esc = (s) => String(s || "").replace(/[&<>"']/g, c => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
     }[c]));
@@ -2340,7 +2378,10 @@ function renderErrorTooltipHtml(head, rows) {
         if (r.count > 1) parts.push(`<span class="rgErrCount">×${r.count}</span>`);
         return `<div class="rgErrRow">${parts.join(" ")}</div>`;
     }).join("");
-    return `<div class="rgErrHead">${esc(head)}</div>${rowsHtml}<div class="rgErrHint">Run rgDump() or download debug bundle in Settings for full details.</div>`;
+    const n = Number(refreshCount) || 1;
+    const badge = n > 1 ? `<span class="rgErrBadge">Attempt ${n}</span>` : "";
+    const hint = triangleRefreshHint(n);
+    return `<div class="rgErrHead">${esc(head)}${badge}</div>${rowsHtml}<div class="rgErrHint">${esc(hint)}</div>`;
 }
 
 function positionErrorTooltip(dot, tip) {
@@ -2355,6 +2396,7 @@ function positionErrorTooltip(dot, tip) {
 function clearError() {
     const dot = document.getElementById("rgErrDot");
     if (dot) dot.style.display = "none";
+    clearTriangleCount();
 }
 
 
@@ -3380,6 +3422,75 @@ function createHUD() {
                     pixelRatio: window.devicePixelRatio || 1,
                 };
             })();
+            const identity = (() => {
+                const u = atlasFirebaseAuth?.currentUser;
+                if (!u) return { uid: firebaseAuthUid || "", present: false };
+                return {
+                    uid: u.uid, isAnonymous: u.isAnonymous,
+                    providers: (u.providerData || []).map(p => p.providerId),
+                    createdAt: u.metadata?.creationTime,
+                    lastSignInAt: u.metadata?.lastSignInTime,
+                    refreshTokenLen: (u.refreshToken || "").length,
+                    firebaseAuthError,
+                };
+            })();
+            const persistence = (() => {
+                const lsKeys = {};
+                try {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        lsKeys[k] = (localStorage.getItem(k) || "").length;
+                    }
+                } catch (e) {}
+                const tm = {};
+                if (typeof GM_getValue === "function") {
+                    for (const k of ["atlasFirebaseAuthUser","rgHudSettings","rgHudStreak","rgHudWinLimits_v1","rgHudSessionStart"]) {
+                        try {
+                            const v = GM_getValue(k, null);
+                            tm[k] = v == null ? null : (typeof v === "string" ? v.length : JSON.stringify(v).length);
+                        } catch { tm[k] = "err"; }
+                    }
+                }
+                return {
+                    localStorageKeys: lsKeys, tampermonkeyStore: tm,
+                    useClanTagPref: (typeof useClanTagPref === "function" ? useClanTagPref() : null),
+                    clanTagPositionPref: (typeof clanTagPositionPref === "function" ? clanTagPositionPref() : null),
+                };
+            })();
+            const nicknamePipeline = (() => {
+                const raw = lastKnownPlayerData?.Nickname || "";
+                const tagPfx = (typeof getClanTagPrefix === "function" ? getClanTagPrefix() : "");
+                return {
+                    rawNickname: raw, rawLength: raw.length,
+                    runtimeClanTagPrefix: tagPfx,
+                    baselineDisplayName: (typeof deriveDisplayName === "function" ? deriveDisplayName(raw) : null),
+                };
+            })();
+            const clanCrossCheck = {
+                localMyClanId: myClan?.id || null,
+                localMyClanTag: myClan?.tag || null,
+                localMyClanName: myClan?.name || null,
+                myRole: (typeof myClanRole === "function" ? myClanRole() : null),
+                clanReservationsEnabled: (typeof clanReservationsEnabled === "function" ? clanReservationsEnabled() : null),
+                joinRequestCount: Array.isArray(myClan?.joinRequests) ? myClan.joinRequests.length : 0,
+            };
+            const browser = (() => {
+                const c = navigator.connection || {};
+                return {
+                    platform: navigator.platform, language: navigator.language,
+                    tz: (Intl.DateTimeFormat().resolvedOptions().timeZone) || null,
+                    onLine: navigator.onLine, cookieEnabled: navigator.cookieEnabled,
+                    hardwareConcurrency: navigator.hardwareConcurrency,
+                    conn: { effectiveType: c.effectiveType, downlink: c.downlink, rtt: c.rtt, saveData: c.saveData },
+                };
+            })();
+            const timings = {
+                hudAliveMs: Math.round(performance.now()),
+                perfOrigin: Math.round(performance.timeOrigin),
+                lastWriteAtByLabel: { ..._lastWriteAtByLabel },
+                nowIso: new Date().toISOString(),
+            };
+            const triangle = { ...readTriangleCount(), bumpedThisSession: _triangleBumpedThisSession };
             const bundle = {
                 version: SCRIPT_VERSION,
                 versionNum: SCRIPT_VERSION_NUM,
@@ -3389,6 +3500,13 @@ function createHUD() {
                 timestamp: new Date().toISOString(),
                 settings: settings,
                 player: trimmedPlayer,
+                identity,
+                nicknamePipeline,
+                persistence,
+                clanCrossCheck,
+                browser,
+                timings,
+                triangle,
                 state: {
                     _inMatch,
                     _liveRoster: _liveRoster.length,
@@ -3427,6 +3545,7 @@ function createHUD() {
                     ? hudSessionDenies.slice(-25)
                     : [],
                 appCheckNow: typeof appCheckSnapshot === "function" ? appCheckSnapshot() : null,
+                appCheckHistory: Array.isArray(_appCheckHistory) ? _appCheckHistory.slice(-20) : [],
                 gateNow: typeof accessSnapshot === "function" ? accessSnapshot() : null,
                 log: _rgLogBuf.slice(-100),
             };
@@ -3875,6 +3994,14 @@ function syncForgeFromLogin(loginData) {
 
 // src/firebase/auth.js
 
+// ring buffer push for App Check mint history
+function pushAppCheckHistory(entry) {
+    if (typeof _appCheckHistory === "undefined") return;
+    _appCheckHistory.push({ at: Date.now(), ...entry });
+    if (_appCheckHistory.length > 20) _appCheckHistory.shift();
+}
+
+
 // fallback for when the Worker forgets expireTimeMillis
 function extractJwtExpMillis(token) {
     try {
@@ -4179,6 +4306,7 @@ async function initFirebaseInner() {
                                 len: 0,
                                 error: msg,
                             };
+                            pushAppCheckHistory({ source: "worker", ok: false, status: resp.status, error: msg });
                             throw new Error(msg);
                         }
                         const data = await resp.json();
@@ -4196,6 +4324,11 @@ async function initFirebaseInner() {
                             len: data.token?.length || 0,
                             error: null,
                         };
+                        pushAppCheckHistory({
+                            source: "worker", ok: true, len: data.token?.length || 0,
+                            expireTimeMillis: effectiveExpMillis, workerExpMillis, jwtExpMillis,
+                            expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
+                        });
                         return { token: data.token, expireTimeMillis: effectiveExpMillis };
                     },
                 }),
@@ -4263,6 +4396,11 @@ async function initFirebaseInner() {
                                 len: tokLen,
                                 error: null,
                             };
+                            pushAppCheckHistory({
+                                source: "sdk-cache", ok: true, len: tokLen,
+                                expireTimeMillis: workerExpMillis || jwtExpMillis || null,
+                                expSource: workerExpMillis ? "worker" : (jwtExpMillis ? "jwt" : "none"),
+                            });
                         }
                     } else {
                         dbg("AppCheck: initial fetch returned empty");
@@ -4272,6 +4410,7 @@ async function initFirebaseInner() {
                             len: 0,
                             error: "empty result",
                         };
+                        pushAppCheckHistory({ source: "initial-fetch", ok: false, error: "empty result" });
                     }
                 },
                 (err) => {
@@ -4283,6 +4422,7 @@ async function initFirebaseInner() {
                         len: 0,
                         error: msg,
                     };
+                    pushAppCheckHistory({ source: "initial-fetch", ok: false, error: msg });
                 },
             );
         }
@@ -4429,9 +4569,6 @@ async function ensureAnonymousAuth(auth) {
 
 // src/firebase/writes.js
 // forceRefresh when the cached token is expired or within 60s of expiry.
-// Idle HUD sessions (private matches, backgrounded tabs) let the SDK's
-// auto-refresh drift past the JWT exp; the next Firestore write then uses
-// a dead token and denies.
 async function ensureFreshAppCheckToken() {
     if (!_atlasAppCheckHandle || typeof _atlasAppCheckGetToken !== "function") return;
     const s = appCheckSnapshot();
@@ -4444,6 +4581,13 @@ async function ensureFreshAppCheckToken() {
     } catch (err) {
         dbg("proactive AppCheck refresh failed: " + (err?.message || String(err)));
     }
+}
+
+function isPermissionDenied(e) {
+    if (!e) return false;
+    const code = String(e.code || "");
+    if (code.includes("permission-denied")) return true;
+    return /permission[- ]denied|insufficient permissions/i.test(String(e.message || ""));
 }
 
 function appCheckSnapshot() {
@@ -4729,10 +4873,12 @@ async function atlasSetDoc(fb, label, ref, data, options) {
     try {
         if (options === undefined) await fb.setDoc(ref, stamped);
         else await fb.setDoc(ref, stamped, options);
+        _lastWriteAtByLabel[label] = Date.now();
+        if (typeof clearTriangleCount === "function") clearTriangleCount();
         _pushWriteAttempt({ ...attempt, ok: true, latencyMs: Date.now() - startedAt });
         return true;
     } catch (e) {
-        if (e && String(e.code || "").includes("permission-denied")) {
+        if (isPermissionDenied(e)) {
             const docId = ref && ref.id;
             const ac = appCheckSnapshot();
             const acc = accessSnapshot();
@@ -14506,7 +14652,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
@@ -14680,6 +14826,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let _lastAppCheckToken = null;
     let _atlasAppCheckHandle = null;
     let _atlasAppCheckGetToken = null;
+    // ring buffer of mint attempts for the debug bundle
+    let _appCheckHistory = [];
+    let _lastWriteAtByLabel = {};
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;

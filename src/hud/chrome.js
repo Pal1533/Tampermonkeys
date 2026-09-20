@@ -20,9 +20,7 @@ export function formatAtlasError(message) {
     const raw = String(message || "Something failed").trim()
         .replace(/\s*(?:—|--).*$/, "")
         .replace(/\.+$/, "");
-    const head = /fail/i.test(raw) ? raw : `${raw} failed`;
-    if (/Discord/i.test(head)) return head;
-    return `${head}, message RIS3N or Pal on Discord`;
+    return /fail/i.test(raw) ? raw : `${raw} failed`;
 }
 
 
@@ -281,11 +279,50 @@ export function setAutoVisible(visible) {
 }
 
 
+const TRIANGLE_COUNT_KEY = "rgHudTriangleRefreshCount";
+const TRIANGLE_WINDOW_MS = 15 * 60 * 1000;
+
+function readTriangleCount() {
+    try {
+        const raw = localStorage.getItem(TRIANGLE_COUNT_KEY);
+        if (!raw) return { n: 0, lastAt: 0 };
+        const v = JSON.parse(raw);
+        if (!v || typeof v.n !== "number") return { n: 0, lastAt: 0 };
+        if (Date.now() - (v.lastAt || 0) > TRIANGLE_WINDOW_MS) return { n: 0, lastAt: 0 };
+        return v;
+    } catch { return { n: 0, lastAt: 0 }; }
+}
+
+function bumpTriangleCount() {
+    const cur = readTriangleCount();
+    // one bump per HUD session, not per error
+    if (_triangleBumpedThisSession) return cur;
+    _triangleBumpedThisSession = true;
+    const next = { n: cur.n + 1, lastAt: Date.now() };
+    try { localStorage.setItem(TRIANGLE_COUNT_KEY, JSON.stringify(next)); } catch {}
+    return next;
+}
+
+export function clearTriangleCount() {
+    try { localStorage.removeItem(TRIANGLE_COUNT_KEY); } catch {}
+    _triangleBumpedThisSession = false;
+}
+
+let _triangleBumpedThisSession = false;
+
+function triangleRefreshHint(n) {
+    if (n <= 1) return "Try refreshing the page (Cmd/Ctrl+R). This clears most stale-token errors.";
+    if (n === 2) return "Still failing after a refresh. Give it one more try — App Check sometimes needs a second refresh.";
+    if (n === 3) return "Third failure across refreshes. Refresh one more time; if the triangle comes back, download the debug bundle in Settings and message RIS3N or Pal on Discord.";
+    return "Persistent error after multiple refreshes. Download the debug bundle in Settings and send it to RIS3N or Pal on Discord.";
+}
+
 export function showError(message) {
     const text = formatAtlasError(message);
     const dot = document.getElementById("rgErrDot");
     if (!dot) return;
     dot.style.display = "inline";
+    const counter = bumpTriangleCount();
 
     // dedupe by origin+message so four identical rows collapse to one row x4
     const seen = new Map();
@@ -313,7 +350,7 @@ export function showError(message) {
         dot.addEventListener("mouseleave", () => { tip.style.opacity = "0"; tip.style.pointerEvents = "none"; });
     }
     dot.removeAttribute("title");
-    tip.innerHTML = renderErrorTooltipHtml(text, rows);
+    tip.innerHTML = renderErrorTooltipHtml(text, rows, counter.n);
     if (tip.matches(":hover")) positionErrorTooltip(dot, tip);
 }
 
@@ -335,6 +372,7 @@ function ensureErrorTooltipStyles() {
         .rgErrTip .rgErrMsg{color:#ffe0e0;overflow-wrap:anywhere;}
         .rgErrTip .rgErrCount{color:#ff8b8b;font-weight:600;flex-shrink:0;}
         .rgErrTip .rgErrHint{margin-top:8px;color:#a89898;font-size:11px;font-style:italic;}
+        .rgErrTip .rgErrBadge{margin-left:8px;padding:1px 6px;border-radius:8px;background:#3a1414;border:1px solid #ff6b6b;color:#ffb0b0;font-size:10px;font-weight:600;letter-spacing:.04em;}
     `;
     document.head.appendChild(style);
     const dot = document.getElementById("rgErrDot");
@@ -348,7 +386,7 @@ function ensureErrorTooltipStyles() {
     }
 }
 
-function renderErrorTooltipHtml(head, rows) {
+function renderErrorTooltipHtml(head, rows, refreshCount) {
     const esc = (s) => String(s || "").replace(/[&<>"']/g, c => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
     }[c]));
@@ -360,7 +398,10 @@ function renderErrorTooltipHtml(head, rows) {
         if (r.count > 1) parts.push(`<span class="rgErrCount">×${r.count}</span>`);
         return `<div class="rgErrRow">${parts.join(" ")}</div>`;
     }).join("");
-    return `<div class="rgErrHead">${esc(head)}</div>${rowsHtml}<div class="rgErrHint">Run rgDump() or download debug bundle in Settings for full details.</div>`;
+    const n = Number(refreshCount) || 1;
+    const badge = n > 1 ? `<span class="rgErrBadge">Attempt ${n}</span>` : "";
+    const hint = triangleRefreshHint(n);
+    return `<div class="rgErrHead">${esc(head)}${badge}</div>${rowsHtml}<div class="rgErrHint">${esc(hint)}</div>`;
 }
 
 function positionErrorTooltip(dot, tip) {
@@ -375,6 +416,7 @@ function positionErrorTooltip(dot, tip) {
 export function clearError() {
     const dot = document.getElementById("rgErrDot");
     if (dot) dot.style.display = "none";
+    clearTriangleCount();
 }
 
 
@@ -1400,6 +1442,75 @@ export function createHUD() {
                     pixelRatio: window.devicePixelRatio || 1,
                 };
             })();
+            const identity = (() => {
+                const u = atlasFirebaseAuth?.currentUser;
+                if (!u) return { uid: firebaseAuthUid || "", present: false };
+                return {
+                    uid: u.uid, isAnonymous: u.isAnonymous,
+                    providers: (u.providerData || []).map(p => p.providerId),
+                    createdAt: u.metadata?.creationTime,
+                    lastSignInAt: u.metadata?.lastSignInTime,
+                    refreshTokenLen: (u.refreshToken || "").length,
+                    firebaseAuthError,
+                };
+            })();
+            const persistence = (() => {
+                const lsKeys = {};
+                try {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        lsKeys[k] = (localStorage.getItem(k) || "").length;
+                    }
+                } catch (e) {}
+                const tm = {};
+                if (typeof GM_getValue === "function") {
+                    for (const k of ["atlasFirebaseAuthUser","rgHudSettings","rgHudStreak","rgHudWinLimits_v1","rgHudSessionStart"]) {
+                        try {
+                            const v = GM_getValue(k, null);
+                            tm[k] = v == null ? null : (typeof v === "string" ? v.length : JSON.stringify(v).length);
+                        } catch { tm[k] = "err"; }
+                    }
+                }
+                return {
+                    localStorageKeys: lsKeys, tampermonkeyStore: tm,
+                    useClanTagPref: (typeof useClanTagPref === "function" ? useClanTagPref() : null),
+                    clanTagPositionPref: (typeof clanTagPositionPref === "function" ? clanTagPositionPref() : null),
+                };
+            })();
+            const nicknamePipeline = (() => {
+                const raw = lastKnownPlayerData?.Nickname || "";
+                const tagPfx = (typeof getClanTagPrefix === "function" ? getClanTagPrefix() : "");
+                return {
+                    rawNickname: raw, rawLength: raw.length,
+                    runtimeClanTagPrefix: tagPfx,
+                    baselineDisplayName: (typeof deriveDisplayName === "function" ? deriveDisplayName(raw) : null),
+                };
+            })();
+            const clanCrossCheck = {
+                localMyClanId: myClan?.id || null,
+                localMyClanTag: myClan?.tag || null,
+                localMyClanName: myClan?.name || null,
+                myRole: (typeof myClanRole === "function" ? myClanRole() : null),
+                clanReservationsEnabled: (typeof clanReservationsEnabled === "function" ? clanReservationsEnabled() : null),
+                joinRequestCount: Array.isArray(myClan?.joinRequests) ? myClan.joinRequests.length : 0,
+            };
+            const browser = (() => {
+                const c = navigator.connection || {};
+                return {
+                    platform: navigator.platform, language: navigator.language,
+                    tz: (Intl.DateTimeFormat().resolvedOptions().timeZone) || null,
+                    onLine: navigator.onLine, cookieEnabled: navigator.cookieEnabled,
+                    hardwareConcurrency: navigator.hardwareConcurrency,
+                    conn: { effectiveType: c.effectiveType, downlink: c.downlink, rtt: c.rtt, saveData: c.saveData },
+                };
+            })();
+            const timings = {
+                hudAliveMs: Math.round(performance.now()),
+                perfOrigin: Math.round(performance.timeOrigin),
+                lastWriteAtByLabel: { ..._lastWriteAtByLabel },
+                nowIso: new Date().toISOString(),
+            };
+            const triangle = { ...readTriangleCount(), bumpedThisSession: _triangleBumpedThisSession };
             const bundle = {
                 version: SCRIPT_VERSION,
                 versionNum: SCRIPT_VERSION_NUM,
@@ -1409,6 +1520,13 @@ export function createHUD() {
                 timestamp: new Date().toISOString(),
                 settings: settings,
                 player: trimmedPlayer,
+                identity,
+                nicknamePipeline,
+                persistence,
+                clanCrossCheck,
+                browser,
+                timings,
+                triangle,
                 state: {
                     _inMatch,
                     _liveRoster: _liveRoster.length,
@@ -1447,6 +1565,7 @@ export function createHUD() {
                     ? hudSessionDenies.slice(-25)
                     : [],
                 appCheckNow: typeof appCheckSnapshot === "function" ? appCheckSnapshot() : null,
+                appCheckHistory: Array.isArray(_appCheckHistory) ? _appCheckHistory.slice(-20) : [],
                 gateNow: typeof accessSnapshot === "function" ? accessSnapshot() : null,
                 log: _rgLogBuf.slice(-100),
             };
