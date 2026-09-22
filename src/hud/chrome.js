@@ -495,7 +495,7 @@ let bestWinStreakLocal = (() => {
     try { return JSON.parse(localStorage.getItem("rgHudBestStreak") ?? "null"); }
     catch { return null; }
 })();
-let bestStreakServerLoaded = false;
+let bestStreakServerLoadedAt = 0;
 let bestStreakLoadInflight = null;
 
 export function bestStreakForAccount(accountId) {
@@ -503,9 +503,10 @@ export function bestStreakForAccount(accountId) {
     return Number(bestWinStreakLocal.best) || 0;
 }
 
+const BEST_STREAK_RELOAD_MS = 5 * 60 * 1000;
 async function loadBestStreakFromServer(accountId) {
-    if (bestStreakServerLoaded) return;
     if (bestStreakLoadInflight) return bestStreakLoadInflight;
+    if (bestStreakServerLoadedAt && Date.now() - bestStreakServerLoadedAt < BEST_STREAK_RELOAD_MS) return;
     if (!firebaseAuthUid || !firestoreReady) return;
     const fb = firestoreReady;
     bestStreakLoadInflight = (async () => {
@@ -530,7 +531,7 @@ async function loadBestStreakFromServer(accountId) {
                     catch {}
                 }
             }
-            bestStreakServerLoaded = true;
+            bestStreakServerLoadedAt = Date.now();
         } catch (e) {
             pushError(e, "loadBestStreak");
         } finally {

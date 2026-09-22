@@ -901,6 +901,8 @@ export async function fetchLeaderboardCacheDirect(fb, mode, playlist) {
     // Assign ranks after filtering so popup #s match the site's JSON.
     const capped = entries.slice(0, RG_LB_TOP_N).map((e, i) => ({ ...e, rank: i + 1 }));
     dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${capped.length})`);
+    // empty usually means transient offline; don't poison the cache
+    if (!capped.length) return null;
     return {
         modes: { [mode]: capped },
         fetchedAt: Date.now(),

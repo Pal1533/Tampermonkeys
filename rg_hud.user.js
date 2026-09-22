@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.7
+// @version      30.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2475,7 +2475,7 @@ let bestWinStreakLocal = (() => {
     try { return JSON.parse(localStorage.getItem("rgHudBestStreak") ?? "null"); }
     catch { return null; }
 })();
-let bestStreakServerLoaded = false;
+let bestStreakServerLoadedAt = 0;
 let bestStreakLoadInflight = null;
 
 function bestStreakForAccount(accountId) {
@@ -2483,9 +2483,10 @@ function bestStreakForAccount(accountId) {
     return Number(bestWinStreakLocal.best) || 0;
 }
 
+const BEST_STREAK_RELOAD_MS = 5 * 60 * 1000;
 async function loadBestStreakFromServer(accountId) {
-    if (bestStreakServerLoaded) return;
     if (bestStreakLoadInflight) return bestStreakLoadInflight;
+    if (bestStreakServerLoadedAt && Date.now() - bestStreakServerLoadedAt < BEST_STREAK_RELOAD_MS) return;
     if (!firebaseAuthUid || !firestoreReady) return;
     const fb = firestoreReady;
     bestStreakLoadInflight = (async () => {
@@ -2510,7 +2511,7 @@ async function loadBestStreakFromServer(accountId) {
                     catch {}
                 }
             }
-            bestStreakServerLoaded = true;
+            bestStreakServerLoadedAt = Date.now();
         } catch (e) {
             pushError(e, "loadBestStreak");
         } finally {
@@ -6073,6 +6074,8 @@ async function fetchLeaderboardCacheDirect(fb, mode, playlist) {
     // Assign ranks after filtering so popup #s match the site's JSON.
     const capped = entries.slice(0, RG_LB_TOP_N).map((e, i) => ({ ...e, rank: i + 1 }));
     dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${capped.length})`);
+    // empty usually means transient offline; don't poison the cache
+    if (!capped.length) return null;
     return {
         modes: { [mode]: capped },
         fetchedAt: Date.now(),
@@ -14667,7 +14670,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
