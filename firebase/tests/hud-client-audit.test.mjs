@@ -1443,7 +1443,13 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const artIndentPad = extractHudFunction("artIndentPad");
   const indentArtBody = extractHudFunction("indentArtBody", { artIndentPad });
   const wrapPackedArt = extractHudFunction("wrapPackedArt", { normalizeForgeAlign });
+  const artUniformGlyph = extractHudFunction("artUniformGlyph");
+  const artDotPackMetrics = extractHudFunction("artDotPackMetrics");
+  const wrapPackedDotArt = extractHudFunction("wrapPackedDotArt", { normalizeForgeAlign });
   const packAsciiArt = extractHudFunction("packAsciiArt", {
+    artUniformGlyph,
+    artDotPackMetrics,
+    wrapPackedDotArt,
     preserveForgeNewlines,
     artLineStats,
     artFitSizePct,
