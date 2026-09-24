@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.8
+// @version      30.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -9988,6 +9988,65 @@ function artLineHeightPct(height) {
   return 100;
 }
 
+// Nameplate budget in em at 100% size, derived from the mspace fit below:
+// 20 columns * 0.65em wide, 7 rows * 0.95em tall.
+const PLATE_W_EM = 13;
+const PLATE_H_EM = 6.65;
+
+// Advance is how far the cursor moves; ink is how much of the em box the glyph
+// actually paints. Setting cell width to ink width is what makes a mosaic read as
+// a picture: cells touch, with no background showing between them. Checked
+// against a known-good name that used '.' at cspace=-.19em (ink .09 - adv .278).
+const GLYPH_BOX = {
+  ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
+  "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
+  "\u2022": { adv: 0.35, inkW: 0.24, inkH: 0.24 },
+  "#": { adv: 0.556, inkW: 0.5, inkH: 0.55 },
+  "\u2588": { adv: 1, inkW: 1, inkH: 1 },
+  "\u25A0": { adv: 1, inkW: 0.8, inkH: 0.8 },
+  "\u25AA": { adv: 0.5, inkW: 0.45, inkH: 0.45 },
+  "\u25CF": { adv: 1, inkW: 0.75, inkH: 0.75 },
+};
+
+// One repeated glyph means every cell is the same width, so mspace is dead
+// weight. cspace plus a tight line-height shrinks the cell to the ink itself,
+// which is how a 100-wide piece fits on a plate that holds 20 mspace columns.
+function artUniformGlyph(text) {
+  const chars = String(text ?? "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/[\s\u00A0]/g, "");
+  if (chars.length < 64) return null;
+  const first = chars[0];
+  if (!GLYPH_BOX[first]) return null;
+  for (const ch of chars) if (ch !== first) return null;
+  return first;
+}
+
+function artDotPackMetrics(glyph, width, height, incoming = null) {
+  const box = GLYPH_BOX[glyph];
+  if (!box || !width || !height) return null;
+  // Negative cspace pulls a wide-advance glyph in; zero when ink fills the box.
+  const cspace = incoming && incoming.cspace != null
+    ? incoming.cspace
+    : Math.round((box.inkW - box.adv) * 1000) / 1000;
+  const lineHeight = incoming && incoming.lineHeight > 0 ? incoming.lineHeight : box.inkH;
+  const cellW = box.adv + cspace;
+  if (cellW <= 0) return null;
+  const fit = Math.min(PLATE_W_EM / (width * cellW), PLATE_H_EM / (height * lineHeight));
+  return { cspace, lineHeight, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
+}
+
+function wrapPackedDotArt(body, metrics, align) {
+  const side = normalizeForgeAlign(align);
+  const padded = /<br\s*\/?\s*>\s*$/i.test(body) ? body : `${body}<br>`;
+  let out = `<align=left>${padded}</align>`;
+  if (metrics.cspace) out = `<cspace=${metrics.cspace}em>${out}`;
+  out = `<line-height=${metrics.lineHeight}em>${out}`;
+  if (metrics.size < 100) out = `<size=${metrics.size}%>${out}`;
+  if (side !== "left") out = `<rgnf-align=${side}>` + out;
+  return out;
+}
+
 function artMspaceEm(text) {
   if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.72em";
   if (/[#:+]/.test(text) && /[.:]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.72em";
@@ -10192,7 +10251,17 @@ function packAsciiArt(text, align) {
     }
     return wrapPackedArt(inner, mspace, lineHeight, size, side);
   }
-  const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
+  // Block-level layout tags get re-emitted below, so drop any that rode in with
+  // pasted art. Leaving them would stack a second, conflicting set of metrics.
+  const tagNum = (re) => { const m = value.match(re); return m ? Number(m[1]) : null; };
+  const incoming = {
+    lineHeight: tagNum(/<line-height=(-?\.?\d*\.?\d+)\s*em>/i),
+    cspace: tagNum(/<cspace=(-?\.?\d*\.?\d+)\s*em>/i),
+  };
+  const normalized = value
+    .replace(/<\/?(?:size|line-height|cspace)(?:=[^>]*)?>/gi, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n");
   const lines = normalized.split("\n");
   const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|align|space|mspace|rotate|pos|voffset|line-height|\/|#)/i.test(normalized)
     || /<#[0-9A-Fa-f]{3,8}>/.test(normalized);
@@ -10203,6 +10272,14 @@ function packAsciiArt(text, align) {
   }).join("<br>");
   if (side !== "left") {
     body = indentArtBody(body, artBlockIndentCols(stats.width, side));
+  }
+  const uniform = artUniformGlyph(normalized);
+  if (uniform) {
+    // Art that arrives with its own cell metrics knows better than the defaults:
+    // a generator can pick a tighter line-height to square the cells up. Keep
+    // what it asked for and only recompute the size that fits the plate.
+    const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
+    if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);
   const mspace = artMspaceEm(normalized);
@@ -10922,6 +10999,13 @@ function createNameForge(host = {}) {
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
+  // Quantum's frame buffer is 49152 bytes and the nickname shares it with
+  // everything else in the frame, so leave real headroom rather than riding
+  // the edge. A known-good 101-wide art name is about 17.5k.
+  // 40k has been applied successfully in-game. The crash seen at 81k is the only
+  // hard data point above that, so allow up to 44k and warn from 38k.
+  const NICKNAME_BYTE_LIMIT = 48000;
+  const NICKNAME_BYTE_WARN = 40000;
   const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
   // per-account state, legacy key read once as a fallback on upgrade
@@ -11778,12 +11862,34 @@ function createNameForge(host = {}) {
 
     const previewName = artPreviewText(s.name);
     const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
+    // Mirror the metrics the packer will emit, so what you see here is the shape
+    // the nameplate gets rather than a monospace grid at full line spacing.
+    const artGlyph = ascii ? artUniformGlyph(previewName) : null;
+    const artStats = artGlyph ? artLineStats(previewName) : null;
+    const artMetrics = artGlyph ? artDotPackMetrics(artGlyph, artStats.width, artStats.height) : null;
+    const artPx = previewNameFontPx(s) * (artMetrics ? artMetrics.size / 100 : 1);
+    const applyAsciiStyle = (el) => {
+      el.style.whiteSpace = 'pre';
+      el.style.textAlign = 'left';
+      if (artMetrics) {
+        const ink = glyphInk(artGlyph, ART_PREVIEW_FONT);
+        const cell = artCellStyle(
+          artGlyph,
+          (ink.adv + artMetrics.cspace) * artPx,
+          artMetrics.lineHeight * artPx
+        );
+        el.style.fontFamily = ART_PREVIEW_FONT;
+        el.style.fontSize = cell.px.toFixed(3) + 'px';
+        el.style.lineHeight = cell.line.toFixed(3) + 'px';
+        el.style.letterSpacing = cell.letter.toFixed(3) + 'px';
+      } else {
+        el.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
+        el.style.lineHeight = '1.1';
+      }
+    };
     if (ascii) {
       wrap.classList.add('rgnf-ascii');
-      nameLine.style.whiteSpace = 'pre';
-      nameLine.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
-      nameLine.style.textAlign = 'left';
-      nameLine.style.lineHeight = '1.1';
+      applyAsciiStyle(nameLine);
     } else {
       nameLine.style.textAlign = normalizeForgeAlign(s.align);
     }
@@ -11803,13 +11909,8 @@ function createNameForge(host = {}) {
     const startNameLine = () => {
       const line = document.createElement('div');
       line.className = 'rgnf-preview-name';
-      if (ascii) {
-        line.style.whiteSpace = 'pre';
-        line.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
-        line.style.textAlign = 'left';
-        line.style.lineHeight = '1.1';
-      }
       line.style.cssText = (line.style.cssText ? line.style.cssText + ';' : '') + styles.join(';');
+      if (ascii) applyAsciiStyle(line);
       return line;
     };
     for (const run of previewRuns) {
@@ -12048,6 +12149,17 @@ function createNameForge(host = {}) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
     code = sanitizeNicknameColors(code);
+    // Photon Quantum serializes the frame into a fixed 49152-byte buffer. An
+    // oversized nickname overflows it and the client dies with
+    // "Offset (0) + Length (N) must be smaller than raw.Length (49152)",
+    // taking the whole match down, so refuse before it ever reaches the server.
+    const codeBytes = new TextEncoder().encode(code).length;
+    if (codeBytes > NICKNAME_BYTE_LIMIT) {
+      throw new Error(
+        `Nickname is ${codeBytes.toLocaleString()} bytes, over the ${NICKNAME_BYTE_LIMIT.toLocaleString()} `
+        + `byte Quantum frame limit. It would crash the game client. Drop the column count or the color count.`
+      );
+    }
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -12598,11 +12710,83 @@ _rgnfFab = fab; _rgnfPanel = panel;
     setTimeout(() => ov.remove(), 2550);
   }
 
+  const ART_PREVIEW_FONT = 'Arial, Helvetica, "Liberation Sans", sans-serif';
+
+  // Measures a glyph's real ink box in the preview font. The game's font paints a
+  // far smaller period than Arial does, so assuming the ink fills its cell is what
+  // made preview rows bleed together into vertical bars.
+  const _inkCache = new Map();
+  function glyphInk(ch, font) {
+    const key = ch + '|' + font;
+    if (_inkCache.has(key)) return _inkCache.get(key);
+    const REF = 100;
+    let ink = { adv: 0.278, w: 0.09, h: 0.09 };
+    try {
+      const c = document.createElement('canvas').getContext('2d');
+      c.font = REF + 'px ' + font;
+      const m = c.measureText(ch);
+      const w = ((m.actualBoundingBoxLeft || 0) + (m.actualBoundingBoxRight || 0)) / REF;
+      const h = ((m.actualBoundingBoxAscent || 0) + (m.actualBoundingBoxDescent || 0)) / REF;
+      if (m.width > 0) {
+        ink = { adv: m.width / REF, w: w > 0 ? w : m.width / REF * 0.3, h: h > 0 ? h : m.width / REF * 0.3 };
+      }
+    } catch (e) { /* no canvas: fall back to Arial period metrics */ }
+    _inkCache.set(key, ink);
+    return ink;
+  }
+
+  // First painted glyph of an art block, which is the cell for uniform art.
+  function artFirstGlyph(text) {
+    const bare = String(text ?? '').replace(/<[^>]*>/g, '').replace(/[\s\u00A0]/g, '');
+    return bare ? bare[0] : '.';
+  }
+
+  // Given the cell pitch in px, pick a font size whose ink fits inside the cell and
+  // the letter-spacing that makes the advance land exactly on the pitch. That is
+  // what turns a smear back into discrete, correctly spaced cells.
+  function artCellStyle(glyph, cellW, cellH) {
+    const ink = glyphInk(glyph, ART_PREVIEW_FONT);
+    const px = Math.max(1, 0.9 * Math.min(cellW / ink.w, cellH / ink.h));
+    return { px, letter: cellW - ink.adv * px, line: cellH };
+  }
+
   function renderRawTMP(raw, opts = {}) {
     const root = document.createElement('div');
     root.className = 'rgnf-preview-inner';
     const art = isAsciiArtText(raw);
     const previewPx = Math.max(10, Math.round(18 * (previewZoom || 1)));
+    // TMP applies <size>, <line-height> and <cspace> to the whole art block, so the
+    // preview has to read them up front. Without this the rows sit a full line
+    // apart and the block renders at full size instead of the shrunk in-game one.
+    const artTag = re => { const m = raw.match(re); return m ? Number(m[1]) : null; };
+    const artSizePct = artTag(/<size=(\d+(?:\.\d+)?)\s*%/i);
+    const artLineEm = artTag(/<line-height=(-?\.?\d*\.?\d+)\s*em/i);
+    const artCspaceEm = artTag(/<cspace=(-?\.?\d*\.?\d+)\s*em/i);
+    const artPx = Math.max(1.5, previewPx * (artSizePct ? artSizePct / 100 : 1));
+    // cspace packs identical glyphs tighter than any monospace cell can, so match
+    // the game's font instead of a mono grid or the columns come out too wide.
+    const artFont = artCspaceEm != null ? ART_PREVIEW_FONT : 'ui-monospace, Menlo, Consolas, monospace';
+    let artCell = null;
+    if (art && artCspaceEm != null) {
+      const glyph = artFirstGlyph(raw);
+      const ink = glyphInk(glyph, ART_PREVIEW_FONT);
+      artCell = artCellStyle(
+        glyph,
+        (ink.adv + artCspaceEm) * artPx,
+        (artLineEm != null ? artLineEm : 1) * artPx
+      );
+    }
+    const applyArtLine = (el) => {
+      el.style.whiteSpace = 'pre';
+      el.style.fontFamily = artFont;
+      if (artCell) {
+        el.style.fontSize = artCell.px.toFixed(3) + 'px';
+        el.style.letterSpacing = artCell.letter.toFixed(3) + 'px';
+        el.style.lineHeight = artCell.line.toFixed(3) + 'px';
+      } else if (artCspaceEm != null) {
+        el.style.letterSpacing = (artCspaceEm * artPx).toFixed(3) + 'px';
+      }
+    };
     const paintName = opts.paintName != null ? String(opts.paintName) : "";
     const paintFrom = Number(opts.paintFrom) || 0;
     const paintTo = opts.paintTo != null ? Number(opts.paintTo) : (paintName ? raw.length : -1);
@@ -12634,13 +12818,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let mspaceEm = null;
     if (art) {
       root.classList.add('rgnf-ascii');
-      root.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
-      root.style.whiteSpace = 'pre';
       root.style.minWidth = 'max-content';
       root.style.width = 'max-content';
       root.style.textAlign = 'left';
-      root.style.fontSize = previewPx + 'px';
-      root.style.lineHeight = '1.12';
+      root.style.fontSize = artPx + 'px';
+      root.style.lineHeight = artLineEm != null ? String(artLineEm) : '1.12';
+      applyArtLine(root);
+      if (artCell) root.style.fontSize = artCell.px.toFixed(3) + 'px';
     } else {
       root.style.lineHeight = '1.35';
     }
@@ -12658,10 +12842,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     };
     const startLine = () => {
       const next = document.createElement('div');
-      if (art) {
-        next.style.whiteSpace = 'pre';
-        next.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
-      }
+      if (art) applyArtLine(next);
       return next;
     };
     let line = startLine();
@@ -12755,7 +12936,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }
       if ((m = rest.match(/^<\/mspace>/i))) { i += m[0].length; continue; }
       if ((m = rest.match(/^<line-height=([\d.]+)(?:em|%)?>/i))) {
-        if (art) root.style.lineHeight = /em/i.test(m[0]) ? String(m[1]) : '1.12';
+        if (art && artLineEm == null) root.style.lineHeight = /em/i.test(m[0]) ? String(m[1]) : '1.12';
         i += m[0].length;
         continue;
       }
@@ -12796,7 +12977,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if (st.sizePct <= 0) {
         span.style.display = 'none';
       } else {
-        span.style.fontSize = (art ? previewPx : Math.max(7, size)) + 'px';
+        span.style.fontSize = (art ? (artCell ? artCell.px : artPx) : Math.max(7, size)) + 'px';
         if (art && mspaceEm) {
           span.style.display = 'inline-block';
           span.style.width = mspaceEm + 'em';
@@ -13098,7 +13279,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }
       if (rawEdit.value !== built) rawEdit.value = built;
       autosizeRawEdit();
-      charSpan.textContent = `${code.length} chars`;
+      const codeBytes = new TextEncoder().encode(code).length;
+      charSpan.textContent = `${code.length} chars · ${codeBytes.toLocaleString()}B`;
+      charSpan.style.color = codeBytes > NICKNAME_BYTE_LIMIT ? '#ef4444'
+        : codeBytes > NICKNAME_BYTE_WARN ? '#f59e0b' : '';
+      charSpan.title = codeBytes > NICKNAME_BYTE_WARN
+        ? `Quantum's frame buffer is 49152 bytes. Over ~${NICKNAME_BYTE_LIMIT.toLocaleString()} risks crashing the client.`
+        : '';
       letterSpan.textContent = `${[...state.name].length} letters`;
       refreshArtHint(state.name, code.length);
       saveJSON(stateKey(), state);
@@ -14670,7 +14857,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

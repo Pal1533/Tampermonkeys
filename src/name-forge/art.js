@@ -54,6 +54,65 @@ export function artLineHeightPct(height) {
   return 100;
 }
 
+// Nameplate budget in em at 100% size, derived from the mspace fit below:
+// 20 columns * 0.65em wide, 7 rows * 0.95em tall.
+const PLATE_W_EM = 13;
+const PLATE_H_EM = 6.65;
+
+// Advance is how far the cursor moves; ink is how much of the em box the glyph
+// actually paints. Setting cell width to ink width is what makes a mosaic read as
+// a picture: cells touch, with no background showing between them. Checked
+// against a known-good name that used '.' at cspace=-.19em (ink .09 - adv .278).
+const GLYPH_BOX = {
+  ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
+  "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
+  "\u2022": { adv: 0.35, inkW: 0.24, inkH: 0.24 },
+  "#": { adv: 0.556, inkW: 0.5, inkH: 0.55 },
+  "\u2588": { adv: 1, inkW: 1, inkH: 1 },
+  "\u25A0": { adv: 1, inkW: 0.8, inkH: 0.8 },
+  "\u25AA": { adv: 0.5, inkW: 0.45, inkH: 0.45 },
+  "\u25CF": { adv: 1, inkW: 0.75, inkH: 0.75 },
+};
+
+// One repeated glyph means every cell is the same width, so mspace is dead
+// weight. cspace plus a tight line-height shrinks the cell to the ink itself,
+// which is how a 100-wide piece fits on a plate that holds 20 mspace columns.
+export function artUniformGlyph(text) {
+  const chars = String(text ?? "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/[\s\u00A0]/g, "");
+  if (chars.length < 64) return null;
+  const first = chars[0];
+  if (!GLYPH_BOX[first]) return null;
+  for (const ch of chars) if (ch !== first) return null;
+  return first;
+}
+
+export function artDotPackMetrics(glyph, width, height, incoming = null) {
+  const box = GLYPH_BOX[glyph];
+  if (!box || !width || !height) return null;
+  // Negative cspace pulls a wide-advance glyph in; zero when ink fills the box.
+  const cspace = incoming && incoming.cspace != null
+    ? incoming.cspace
+    : Math.round((box.inkW - box.adv) * 1000) / 1000;
+  const lineHeight = incoming && incoming.lineHeight > 0 ? incoming.lineHeight : box.inkH;
+  const cellW = box.adv + cspace;
+  if (cellW <= 0) return null;
+  const fit = Math.min(PLATE_W_EM / (width * cellW), PLATE_H_EM / (height * lineHeight));
+  return { cspace, lineHeight, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
+}
+
+export function wrapPackedDotArt(body, metrics, align) {
+  const side = normalizeForgeAlign(align);
+  const padded = /<br\s*\/?\s*>\s*$/i.test(body) ? body : `${body}<br>`;
+  let out = `<align=left>${padded}</align>`;
+  if (metrics.cspace) out = `<cspace=${metrics.cspace}em>${out}`;
+  out = `<line-height=${metrics.lineHeight}em>${out}`;
+  if (metrics.size < 100) out = `<size=${metrics.size}%>${out}`;
+  if (side !== "left") out = `<rgnf-align=${side}>` + out;
+  return out;
+}
+
 export function artMspaceEm(text) {
   if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.72em";
   if (/[#:+]/.test(text) && /[.:]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.72em";
@@ -258,7 +317,17 @@ export function packAsciiArt(text, align) {
     }
     return wrapPackedArt(inner, mspace, lineHeight, size, side);
   }
-  const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
+  // Block-level layout tags get re-emitted below, so drop any that rode in with
+  // pasted art. Leaving them would stack a second, conflicting set of metrics.
+  const tagNum = (re) => { const m = value.match(re); return m ? Number(m[1]) : null; };
+  const incoming = {
+    lineHeight: tagNum(/<line-height=(-?\.?\d*\.?\d+)\s*em>/i),
+    cspace: tagNum(/<cspace=(-?\.?\d*\.?\d+)\s*em>/i),
+  };
+  const normalized = value
+    .replace(/<\/?(?:size|line-height|cspace)(?:=[^>]*)?>/gi, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n");
   const lines = normalized.split("\n");
   const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|align|space|mspace|rotate|pos|voffset|line-height|\/|#)/i.test(normalized)
     || /<#[0-9A-Fa-f]{3,8}>/.test(normalized);
@@ -269,6 +338,14 @@ export function packAsciiArt(text, align) {
   }).join("<br>");
   if (side !== "left") {
     body = indentArtBody(body, artBlockIndentCols(stats.width, side));
+  }
+  const uniform = artUniformGlyph(normalized);
+  if (uniform) {
+    // Art that arrives with its own cell metrics knows better than the defaults:
+    // a generator can pick a tighter line-height to square the cells up. Keep
+    // what it asked for and only recompute the size that fits the plate.
+    const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
+    if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);
   const mspace = artMspaceEm(normalized);
