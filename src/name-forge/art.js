@@ -72,7 +72,7 @@ export function artDotPackMetrics(glyph, width, height, incoming = null) {
   // adv is the cursor step, ink is what gets painted. Cells touch when the width
   // matches the ink. A name we know works uses '.' at .088 ink minus .278 adv.
   const GLYPH_BOX = {
-    ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
+    ".": { adv: 0.278, inkW: 0.045, inkH: 0.09 },
     "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
     "\u2022": { adv: 0.35, inkW: 0.24, inkH: 0.24 },
     "#": { adv: 0.556, inkW: 0.5, inkH: 0.55 },
