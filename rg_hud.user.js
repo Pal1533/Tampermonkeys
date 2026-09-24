@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      30.9
+// @version      31.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -171,16 +171,57 @@ function medianPingSample(samples) {
 }
 
 // src/shared/nickname-color.js
-// 6-as-g makes FA6 → fag. Fire oranges like #FFA600 trip the nickname API.
-function nickSafeColor(hex) {
+// The nickname API runs a word filter over the raw string, and hex digits spell
+// things: 6-as-g makes FA6 -> fag, 8-as-b makes 8008 -> boob.
+//
+// A55 (ass) is deliberately NOT guarded. It lands on every warm mid-tone like
+// #CCAA55, so guarding it rewrites a lot of art colors, and it has not been
+// confirmed as something the API rejects. Add "A55" to TOKENS below if it is.
+//
+// This function is self-contained on purpose: the audit tests eval it on its own,
+// so anything it reads from module scope would be undefined in there.
+function nickSafeColor(hex, prefix = "") {
   const raw = String(hex || "");
-  const m = raw.match(/^(#?)([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?$/);
+  const m = raw.match(/^(#?)([0-9A-Fa-f]{3,8})$/);
   if (!m) return raw;
-  return `${m[1] || "#"}${m[2].toUpperCase().replace(/FA6/g, "FA7")}${m[3] || ""}`;
+  const body = m[2].toUpperCase();
+
+  const TOKENS = ["FA6", "B00B", "8008", "1488"];
+  // Which nibbles may move, least visible first, alpha never. In a 6-digit color
+  // the odd indexes are the low half of each channel, so moving one shifts it by
+  // 1/255. Short forms only have whole-channel digits and move by 17/255.
+  // Alpha stays put: nudging it can blank a glyph.
+  const ORDER = { 3: [2, 1, 0], 4: [2, 1, 0], 6: [5, 3, 1, 4, 2, 0], 8: [5, 3, 1, 4, 2, 0] }[body.length];
+  if (!ORDER) return raw;
+
+  const clean = (text) => !TOKENS.some((token) => text.includes(token));
+  const head = String(prefix || "").toUpperCase();
+  if (clean(head + body)) return `${m[1] || "#"}${body}`;
+
+  for (const index of ORDER) {
+    const current = parseInt(body[index], 16);
+    for (let step = 1; step <= 15; step += 1) {
+      const digit = ((current + step) % 16).toString(16).toUpperCase();
+      const candidate = body.slice(0, index) + digit + body.slice(index + 1);
+      if (clean(head + candidate)) return `${m[1] || "#"}${candidate}`;
+    }
+  }
+  return `${m[1] || "#"}${body}`;
 }
 
+// The filter drops punctuation before matching, so consecutive color tags run
+// together and a token can straddle the boundary. Carry the previous tag's tail
+// and check the join, not just each tag alone. TMP takes 3, 4, 6 and 8 digit hex,
+// and art uses the 3-digit form to save bytes, so all four are covered.
 function sanitizeNicknameColors(code) {
-  return String(code ?? "").replace(/<#([0-9A-Fa-f]{6})>/g, (_, h) => `<${nickSafeColor("#" + h)}>`);
+  let tail = "";
+  return String(code ?? "").replace(/<#([0-9A-Fa-f]{3,8})>/g, (match, h) => {
+    const safe = nickSafeColor("#" + h, tail);
+    const body = safe.slice(1);
+    if (body.length !== h.length) return match;
+    tail = body.slice(-7);
+    return `<#${body}>`;
+  });
 }
 
 // src/identity/device.js
@@ -14855,7 +14896,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "30.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
