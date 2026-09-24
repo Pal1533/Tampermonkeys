@@ -1239,7 +1239,8 @@ export function createNameForge(host = {}) {
     if (mismatch) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
-    code = sanitizeNicknameColors(code);
+    // rgnf-align is ours, only there to remember the setting. TMP prints it.
+    code = sanitizeNicknameColors(code.replace(/<\/?rgnf-[^>]*>/gi, ""));
     // Too big and the client dies mid match, so stop it here.
     const codeBytes = new TextEncoder().encode(code).length;
     if (codeBytes > NICKNAME_BYTE_LIMIT) {

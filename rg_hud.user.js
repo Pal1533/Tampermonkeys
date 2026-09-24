@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      31.2
+// @version      31.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -12178,7 +12178,8 @@ function createNameForge(host = {}) {
     if (mismatch) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
-    code = sanitizeNicknameColors(code);
+    // rgnf-align is ours, only there to remember the setting. TMP prints it.
+    code = sanitizeNicknameColors(code.replace(/<\/?rgnf-[^>]*>/gi, ""));
     // Too big and the client dies mid match, so stop it here.
     const codeBytes = new TextEncoder().encode(code).length;
     if (codeBytes > NICKNAME_BYTE_LIMIT) {
@@ -14877,7 +14878,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
