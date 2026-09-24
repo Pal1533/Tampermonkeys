@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      31.0
+// @version      31.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -171,15 +171,10 @@ function medianPingSample(samples) {
 }
 
 // src/shared/nickname-color.js
-// The nickname API runs a word filter over the raw string, and hex digits spell
-// things: 6-as-g makes FA6 -> fag, 8-as-b makes 8008 -> boob.
-//
-// A55 (ass) is deliberately NOT guarded. It lands on every warm mid-tone like
-// #CCAA55, so guarding it rewrites a lot of art colors, and it has not been
-// confirmed as something the API rejects. Add "A55" to TOKENS below if it is.
-//
-// This function is self-contained on purpose: the audit tests eval it on its own,
-// so anything it reads from module scope would be undefined in there.
+// Hex digits spell words to the nickname filter: FA6 reads as fag, 8008 as boob.
+// A55 (ass) is left alone on purpose. It hits every warm mid-tone like #CCAA55
+// and was never confirmed as a rejection. Add it to TOKENS if it turns out to be.
+// Self-contained because the audit tests eval this function alone.
 function nickSafeColor(hex, prefix = "") {
   const raw = String(hex || "");
   const m = raw.match(/^(#?)([0-9A-Fa-f]{3,8})$/);
@@ -187,10 +182,8 @@ function nickSafeColor(hex, prefix = "") {
   const body = m[2].toUpperCase();
 
   const TOKENS = ["FA6", "B00B", "8008", "1488"];
-  // Which nibbles may move, least visible first, alpha never. In a 6-digit color
-  // the odd indexes are the low half of each channel, so moving one shifts it by
-  // 1/255. Short forms only have whole-channel digits and move by 17/255.
-  // Alpha stays put: nudging it can blank a glyph.
+  // Nibbles to try, least visible first. Odd indexes are a channel's low half, so
+  // moving one shifts it by 1/255. Alpha is never touched: it can blank a glyph.
   const ORDER = { 3: [2, 1, 0], 4: [2, 1, 0], 6: [5, 3, 1, 4, 2, 0], 8: [5, 3, 1, 4, 2, 0] }[body.length];
   if (!ORDER) return raw;
 
@@ -209,10 +202,8 @@ function nickSafeColor(hex, prefix = "") {
   return `${m[1] || "#"}${body}`;
 }
 
-// The filter drops punctuation before matching, so consecutive color tags run
-// together and a token can straddle the boundary. Carry the previous tag's tail
-// and check the join, not just each tag alone. TMP takes 3, 4, 6 and 8 digit hex,
-// and art uses the 3-digit form to save bytes, so all four are covered.
+// The filter strips punctuation, so neighboring tags run together and a token can
+// straddle the join. Carry the previous tail and check that, not each tag alone.
 function sanitizeNicknameColors(code) {
   let tail = "";
   return String(code ?? "").replace(/<#([0-9A-Fa-f]{3,8})>/g, (match, h) => {
@@ -10029,11 +10020,10 @@ function artLineHeightPct(height) {
   return 100;
 }
 
-// One repeated glyph means every cell is the same width, so mspace is dead
-// weight. cspace plus a tight line-height shrinks the cell to the ink itself,
-// which is how a 100-wide piece fits on a plate that holds 20 mspace columns.
-// These helpers stay self-contained: the audit tests eval each function on its
-// own, so a module-level constant would be invisible inside them.
+// One repeated glyph means every cell is the same width, so mspace is wasted.
+// cspace plus a tight line-height shrinks the cell to the ink, which is how a
+// 100-wide piece fits a plate that holds 20 mspace columns.
+// Self-contained: the audit tests eval each of these alone.
 function artUniformGlyph(text) {
   const chars = String(text ?? "")
     .replace(/<[^>]*>/g, "")
@@ -10045,9 +10035,9 @@ function artUniformGlyph(text) {
 }
 
 function artDotPackMetrics(glyph, width, height, incoming = null) {
-  // Advance is how far the cursor moves; ink is how much of the em box the glyph
-  // paints. Cell width equal to ink width is what makes cells touch. Checked
-  // against a known-good name using '.' at cspace=-.19em (ink .088 - adv .278).
+  // adv is how far the cursor moves, ink is what the glyph actually paints.
+  // Cell width equal to ink width is what makes cells touch. Matches a
+  // known-good name: '.' at cspace=-.19em is ink .088 minus adv .278.
   const GLYPH_BOX = {
     ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
     "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
@@ -10058,7 +10048,7 @@ function artDotPackMetrics(glyph, width, height, incoming = null) {
     "\u25AA": { adv: 0.5, inkW: 0.45, inkH: 0.45 },
     "\u25CF": { adv: 1, inkW: 0.75, inkH: 0.75 },
   };
-  // Nameplate budget in em at 100% size: 20 columns * 0.65em, 7 rows * 0.95em.
+  // Nameplate budget in em at 100%: 20 cols * 0.65em, 7 rows * 0.95em.
   const PLATE_W_EM = 13;
   const PLATE_H_EM = 6.65;
 
@@ -10237,6 +10227,17 @@ function padArtLastLine(markup, height) {
   return value + "<br>";
 }
 
+// #CCAA55 and #CA5 are the same color, but 6 bytes instead of 9. Art carries
+// thousands of tags, so that is a third more cells under the size limit. Only
+// shrinks when both nibbles of a channel match, so the color never changes.
+function shrinkHexTags(code) {
+  return String(code ?? "").replace(/<#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})>/g, (match, body) => {
+    const pairs = body.match(/../g) || [];
+    if (!pairs.every((pair) => pair[0].toLowerCase() === pair[1].toLowerCase())) return match;
+    return `<#${pairs.map((pair) => pair[0]).join("")}>`;
+  });
+}
+
 // Monospace + fit-to-nameplate. Plain art `<` `>` become fullwidth so TMP
 // does not eat the rest of a FIGlet / dot piece as tags.
 // Left-align so each row shares an edge the way the preview does. The
@@ -10290,8 +10291,7 @@ function packAsciiArt(text, align) {
     }
     return wrapPackedArt(inner, mspace, lineHeight, size, side);
   }
-  // Block-level layout tags get re-emitted below, so drop any that rode in with
-  // pasted art. Leaving them would stack a second, conflicting set of metrics.
+  // These get re-emitted below, so drop any that rode in with pasted art.
   const tagNum = (re) => { const m = value.match(re); return m ? Number(m[1]) : null; };
   const incoming = {
     lineHeight: tagNum(/<line-height=(-?\.?\d*\.?\d+)\s*em>/i),
@@ -10314,9 +10314,8 @@ function packAsciiArt(text, align) {
   }
   const uniform = artUniformGlyph(normalized);
   if (uniform) {
-    // Art that arrives with its own cell metrics knows better than the defaults:
-    // a generator can pick a tighter line-height to square the cells up. Keep
-    // what it asked for and only recompute the size that fits the plate.
+    // Pasted art with its own metrics knows better than the defaults. Keep what
+    // it asked for and only recompute the size that fits the plate.
     const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
@@ -11038,11 +11037,8 @@ function createNameForge(host = {}) {
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
-  // Quantum's frame buffer is 49152 bytes and the nickname shares it with
-  // everything else in the frame, so leave real headroom rather than riding
-  // the edge. A known-good 101-wide art name is about 17.5k.
-  // 40k has been applied successfully in-game. The crash seen at 81k is the only
-  // hard data point above that, so allow up to 44k and warn from 38k.
+  // Quantum's frame buffer is 49152 bytes total and the nickname shares it, so
+  // leave headroom. 40k has been applied in-game; the crash was seen at 81k.
   const NICKNAME_BYTE_LIMIT = 48000;
   const NICKNAME_BYTE_WARN = 40000;
   const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
@@ -11772,7 +11768,7 @@ function createNameForge(host = {}) {
     }
 
     let code = open + nameCode + close;
-    if (packedArt) code = packAsciiArt(code, align);
+    if (packedArt) code = shrinkHexTags(packAsciiArt(code, align));
 
     // Build title and subtitle blocks. Both share the same alignment as the
     // name/art (packAsciiArt already emits a trailing <br> so injecting the
@@ -11834,7 +11830,9 @@ function createNameForge(host = {}) {
   function effectiveForgeCode(s) {
     if (typeof s.rawCode === 'string') {
       const art = isAsciiArtText(s.rawCode) || isAsciiArtText(s.name);
-      const raw = art ? packAsciiArt(s.rawCode, s.align) : preserveForgeNewlines(s.rawCode);
+      const raw = art
+        ? shrinkHexTags(packAsciiArt(s.rawCode, s.align))
+        : preserveForgeNewlines(s.rawCode);
       return spliceLayersOnFirstLine(raw, s) + scoredSuffix(s);
     }
     return buildCode(s);
@@ -11901,8 +11899,7 @@ function createNameForge(host = {}) {
 
     const previewName = artPreviewText(s.name);
     const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
-    // Mirror the metrics the packer will emit, so what you see here is the shape
-    // the nameplate gets rather than a monospace grid at full line spacing.
+    // Mirror what the packer will emit so this shows the real nameplate shape.
     const artGlyph = ascii ? artUniformGlyph(previewName) : null;
     const artStats = artGlyph ? artLineStats(previewName) : null;
     const artMetrics = artGlyph ? artDotPackMetrics(artGlyph, artStats.width, artStats.height) : null;
@@ -12188,10 +12185,8 @@ function createNameForge(host = {}) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
     code = sanitizeNicknameColors(code);
-    // Photon Quantum serializes the frame into a fixed 49152-byte buffer. An
-    // oversized nickname overflows it and the client dies with
-    // "Offset (0) + Length (N) must be smaller than raw.Length (49152)",
-    // taking the whole match down, so refuse before it ever reaches the server.
+    // Overflowing Quantum's frame buffer kills the client mid-match, so refuse
+    // before this reaches the server.
     const codeBytes = new TextEncoder().encode(code).length;
     if (codeBytes > NICKNAME_BYTE_LIMIT) {
       throw new Error(
@@ -12751,9 +12746,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
 
   const ART_PREVIEW_FONT = 'Arial, Helvetica, "Liberation Sans", sans-serif';
 
-  // Measures a glyph's real ink box in the preview font. The game's font paints a
-  // far smaller period than Arial does, so assuming the ink fills its cell is what
-  // made preview rows bleed together into vertical bars.
+  // Arial paints a much bigger period than the game's font, so assuming ink fills
+  // its cell is what made preview rows bleed into vertical bars.
   const _inkCache = new Map();
   function glyphInk(ch, font) {
     const key = ch + '|' + font;
@@ -12774,15 +12768,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return ink;
   }
 
-  // First painted glyph of an art block, which is the cell for uniform art.
+  // First painted glyph, which is the cell for uniform art.
   function artFirstGlyph(text) {
     const bare = String(text ?? '').replace(/<[^>]*>/g, '').replace(/[\s\u00A0]/g, '');
     return bare ? bare[0] : '.';
   }
 
-  // Given the cell pitch in px, pick a font size whose ink fits inside the cell and
-  // the letter-spacing that makes the advance land exactly on the pitch. That is
-  // what turns a smear back into discrete, correctly spaced cells.
+  // Pick a font size whose ink fits the cell, plus the letter-spacing that lands
+  // the advance on the pitch. Turns a smear back into discrete cells.
   function artCellStyle(glyph, cellW, cellH) {
     const ink = glyphInk(glyph, ART_PREVIEW_FONT);
     const px = Math.max(1, 0.9 * Math.min(cellW / ink.w, cellH / ink.h));
@@ -12794,16 +12787,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
     root.className = 'rgnf-preview-inner';
     const art = isAsciiArtText(raw);
     const previewPx = Math.max(10, Math.round(18 * (previewZoom || 1)));
-    // TMP applies <size>, <line-height> and <cspace> to the whole art block, so the
-    // preview has to read them up front. Without this the rows sit a full line
-    // apart and the block renders at full size instead of the shrunk in-game one.
+    // TMP applies these to the whole art block, so read them up front. Without it
+    // rows sit a full line apart and the block renders at full size.
     const artTag = re => { const m = raw.match(re); return m ? Number(m[1]) : null; };
     const artSizePct = artTag(/<size=(\d+(?:\.\d+)?)\s*%/i);
     const artLineEm = artTag(/<line-height=(-?\.?\d*\.?\d+)\s*em/i);
     const artCspaceEm = artTag(/<cspace=(-?\.?\d*\.?\d+)\s*em/i);
     const artPx = Math.max(1.5, previewPx * (artSizePct ? artSizePct / 100 : 1));
-    // cspace packs identical glyphs tighter than any monospace cell can, so match
-    // the game's font instead of a mono grid or the columns come out too wide.
+    // cspace packs tighter than a monospace cell, so use the game's font or the
+    // columns come out too wide.
     const artFont = artCspaceEm != null ? ART_PREVIEW_FONT : 'ui-monospace, Menlo, Consolas, monospace';
     let artCell = null;
     if (art && artCspaceEm != null) {
@@ -14896,7 +14888,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

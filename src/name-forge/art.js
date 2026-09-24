@@ -54,11 +54,10 @@ export function artLineHeightPct(height) {
   return 100;
 }
 
-// One repeated glyph means every cell is the same width, so mspace is dead
-// weight. cspace plus a tight line-height shrinks the cell to the ink itself,
-// which is how a 100-wide piece fits on a plate that holds 20 mspace columns.
-// These helpers stay self-contained: the audit tests eval each function on its
-// own, so a module-level constant would be invisible inside them.
+// One repeated glyph means every cell is the same width, so mspace is wasted.
+// cspace plus a tight line-height shrinks the cell to the ink, which is how a
+// 100-wide piece fits a plate that holds 20 mspace columns.
+// Self-contained: the audit tests eval each of these alone.
 export function artUniformGlyph(text) {
   const chars = String(text ?? "")
     .replace(/<[^>]*>/g, "")
@@ -70,9 +69,9 @@ export function artUniformGlyph(text) {
 }
 
 export function artDotPackMetrics(glyph, width, height, incoming = null) {
-  // Advance is how far the cursor moves; ink is how much of the em box the glyph
-  // paints. Cell width equal to ink width is what makes cells touch. Checked
-  // against a known-good name using '.' at cspace=-.19em (ink .088 - adv .278).
+  // adv is how far the cursor moves, ink is what the glyph actually paints.
+  // Cell width equal to ink width is what makes cells touch. Matches a
+  // known-good name: '.' at cspace=-.19em is ink .088 minus adv .278.
   const GLYPH_BOX = {
     ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
     "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
@@ -83,7 +82,7 @@ export function artDotPackMetrics(glyph, width, height, incoming = null) {
     "\u25AA": { adv: 0.5, inkW: 0.45, inkH: 0.45 },
     "\u25CF": { adv: 1, inkW: 0.75, inkH: 0.75 },
   };
-  // Nameplate budget in em at 100% size: 20 columns * 0.65em, 7 rows * 0.95em.
+  // Nameplate budget in em at 100%: 20 cols * 0.65em, 7 rows * 0.95em.
   const PLATE_W_EM = 13;
   const PLATE_H_EM = 6.65;
 
@@ -262,6 +261,17 @@ export function padArtLastLine(markup, height) {
   return value + "<br>";
 }
 
+// #CCAA55 and #CA5 are the same color, but 6 bytes instead of 9. Art carries
+// thousands of tags, so that is a third more cells under the size limit. Only
+// shrinks when both nibbles of a channel match, so the color never changes.
+export function shrinkHexTags(code) {
+  return String(code ?? "").replace(/<#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})>/g, (match, body) => {
+    const pairs = body.match(/../g) || [];
+    if (!pairs.every((pair) => pair[0].toLowerCase() === pair[1].toLowerCase())) return match;
+    return `<#${pairs.map((pair) => pair[0]).join("")}>`;
+  });
+}
+
 // Monospace + fit-to-nameplate. Plain art `<` `>` become fullwidth so TMP
 // does not eat the rest of a FIGlet / dot piece as tags.
 // Left-align so each row shares an edge the way the preview does. The
@@ -315,8 +325,7 @@ export function packAsciiArt(text, align) {
     }
     return wrapPackedArt(inner, mspace, lineHeight, size, side);
   }
-  // Block-level layout tags get re-emitted below, so drop any that rode in with
-  // pasted art. Leaving them would stack a second, conflicting set of metrics.
+  // These get re-emitted below, so drop any that rode in with pasted art.
   const tagNum = (re) => { const m = value.match(re); return m ? Number(m[1]) : null; };
   const incoming = {
     lineHeight: tagNum(/<line-height=(-?\.?\d*\.?\d+)\s*em>/i),
@@ -339,9 +348,8 @@ export function packAsciiArt(text, align) {
   }
   const uniform = artUniformGlyph(normalized);
   if (uniform) {
-    // Art that arrives with its own cell metrics knows better than the defaults:
-    // a generator can pick a tighter line-height to square the cells up. Keep
-    // what it asked for and only recompute the size that fits the plate.
+    // Pasted art with its own metrics knows better than the defaults. Keep what
+    // it asked for and only recompute the size that fits the plate.
     const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }

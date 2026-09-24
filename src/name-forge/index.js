@@ -16,6 +16,7 @@ import {
   artLineHeightEm,
   artUniformGlyph,
   artDotPackMetrics,
+  shrinkHexTags,
   isBrailleArtText,
   brailleToAsciiArt,
   restorePreferredArtChars,
@@ -91,11 +92,8 @@ export function createNameForge(host = {}) {
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
-  // Quantum's frame buffer is 49152 bytes and the nickname shares it with
-  // everything else in the frame, so leave real headroom rather than riding
-  // the edge. A known-good 101-wide art name is about 17.5k.
-  // 40k has been applied successfully in-game. The crash seen at 81k is the only
-  // hard data point above that, so allow up to 44k and warn from 38k.
+  // Quantum's frame buffer is 49152 bytes total and the nickname shares it, so
+  // leave headroom. 40k has been applied in-game; the crash was seen at 81k.
   const NICKNAME_BYTE_LIMIT = 48000;
   const NICKNAME_BYTE_WARN = 40000;
   const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
@@ -825,7 +823,7 @@ export function createNameForge(host = {}) {
     }
 
     let code = open + nameCode + close;
-    if (packedArt) code = packAsciiArt(code, align);
+    if (packedArt) code = shrinkHexTags(packAsciiArt(code, align));
 
     // Build title and subtitle blocks. Both share the same alignment as the
     // name/art (packAsciiArt already emits a trailing <br> so injecting the
@@ -887,7 +885,9 @@ export function createNameForge(host = {}) {
   function effectiveForgeCode(s) {
     if (typeof s.rawCode === 'string') {
       const art = isAsciiArtText(s.rawCode) || isAsciiArtText(s.name);
-      const raw = art ? packAsciiArt(s.rawCode, s.align) : preserveForgeNewlines(s.rawCode);
+      const raw = art
+        ? shrinkHexTags(packAsciiArt(s.rawCode, s.align))
+        : preserveForgeNewlines(s.rawCode);
       return spliceLayersOnFirstLine(raw, s) + scoredSuffix(s);
     }
     return buildCode(s);
@@ -954,8 +954,7 @@ export function createNameForge(host = {}) {
 
     const previewName = artPreviewText(s.name);
     const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
-    // Mirror the metrics the packer will emit, so what you see here is the shape
-    // the nameplate gets rather than a monospace grid at full line spacing.
+    // Mirror what the packer will emit so this shows the real nameplate shape.
     const artGlyph = ascii ? artUniformGlyph(previewName) : null;
     const artStats = artGlyph ? artLineStats(previewName) : null;
     const artMetrics = artGlyph ? artDotPackMetrics(artGlyph, artStats.width, artStats.height) : null;
@@ -1241,10 +1240,8 @@ export function createNameForge(host = {}) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
     code = sanitizeNicknameColors(code);
-    // Photon Quantum serializes the frame into a fixed 49152-byte buffer. An
-    // oversized nickname overflows it and the client dies with
-    // "Offset (0) + Length (N) must be smaller than raw.Length (49152)",
-    // taking the whole match down, so refuse before it ever reaches the server.
+    // Overflowing Quantum's frame buffer kills the client mid-match, so refuse
+    // before this reaches the server.
     const codeBytes = new TextEncoder().encode(code).length;
     if (codeBytes > NICKNAME_BYTE_LIMIT) {
       throw new Error(
@@ -1804,9 +1801,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
 
   const ART_PREVIEW_FONT = 'Arial, Helvetica, "Liberation Sans", sans-serif';
 
-  // Measures a glyph's real ink box in the preview font. The game's font paints a
-  // far smaller period than Arial does, so assuming the ink fills its cell is what
-  // made preview rows bleed together into vertical bars.
+  // Arial paints a much bigger period than the game's font, so assuming ink fills
+  // its cell is what made preview rows bleed into vertical bars.
   const _inkCache = new Map();
   function glyphInk(ch, font) {
     const key = ch + '|' + font;
@@ -1827,15 +1823,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return ink;
   }
 
-  // First painted glyph of an art block, which is the cell for uniform art.
+  // First painted glyph, which is the cell for uniform art.
   function artFirstGlyph(text) {
     const bare = String(text ?? '').replace(/<[^>]*>/g, '').replace(/[\s\u00A0]/g, '');
     return bare ? bare[0] : '.';
   }
 
-  // Given the cell pitch in px, pick a font size whose ink fits inside the cell and
-  // the letter-spacing that makes the advance land exactly on the pitch. That is
-  // what turns a smear back into discrete, correctly spaced cells.
+  // Pick a font size whose ink fits the cell, plus the letter-spacing that lands
+  // the advance on the pitch. Turns a smear back into discrete cells.
   function artCellStyle(glyph, cellW, cellH) {
     const ink = glyphInk(glyph, ART_PREVIEW_FONT);
     const px = Math.max(1, 0.9 * Math.min(cellW / ink.w, cellH / ink.h));
@@ -1847,16 +1842,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
     root.className = 'rgnf-preview-inner';
     const art = isAsciiArtText(raw);
     const previewPx = Math.max(10, Math.round(18 * (previewZoom || 1)));
-    // TMP applies <size>, <line-height> and <cspace> to the whole art block, so the
-    // preview has to read them up front. Without this the rows sit a full line
-    // apart and the block renders at full size instead of the shrunk in-game one.
+    // TMP applies these to the whole art block, so read them up front. Without it
+    // rows sit a full line apart and the block renders at full size.
     const artTag = re => { const m = raw.match(re); return m ? Number(m[1]) : null; };
     const artSizePct = artTag(/<size=(\d+(?:\.\d+)?)\s*%/i);
     const artLineEm = artTag(/<line-height=(-?\.?\d*\.?\d+)\s*em/i);
     const artCspaceEm = artTag(/<cspace=(-?\.?\d*\.?\d+)\s*em/i);
     const artPx = Math.max(1.5, previewPx * (artSizePct ? artSizePct / 100 : 1));
-    // cspace packs identical glyphs tighter than any monospace cell can, so match
-    // the game's font instead of a mono grid or the columns come out too wide.
+    // cspace packs tighter than a monospace cell, so use the game's font or the
+    // columns come out too wide.
     const artFont = artCspaceEm != null ? ART_PREVIEW_FONT : 'ui-monospace, Menlo, Consolas, monospace';
     let artCell = null;
     if (art && artCspaceEm != null) {

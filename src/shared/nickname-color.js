@@ -1,12 +1,7 @@
-// The nickname API runs a word filter over the raw string, and hex digits spell
-// things: 6-as-g makes FA6 -> fag, 8-as-b makes 8008 -> boob.
-//
-// A55 (ass) is deliberately NOT guarded. It lands on every warm mid-tone like
-// #CCAA55, so guarding it rewrites a lot of art colors, and it has not been
-// confirmed as something the API rejects. Add "A55" to TOKENS below if it is.
-//
-// This function is self-contained on purpose: the audit tests eval it on its own,
-// so anything it reads from module scope would be undefined in there.
+// Hex digits spell words to the nickname filter: FA6 reads as fag, 8008 as boob.
+// A55 (ass) is left alone on purpose. It hits every warm mid-tone like #CCAA55
+// and was never confirmed as a rejection. Add it to TOKENS if it turns out to be.
+// Self-contained because the audit tests eval this function alone.
 export function nickSafeColor(hex, prefix = "") {
   const raw = String(hex || "");
   const m = raw.match(/^(#?)([0-9A-Fa-f]{3,8})$/);
@@ -14,10 +9,8 @@ export function nickSafeColor(hex, prefix = "") {
   const body = m[2].toUpperCase();
 
   const TOKENS = ["FA6", "B00B", "8008", "1488"];
-  // Which nibbles may move, least visible first, alpha never. In a 6-digit color
-  // the odd indexes are the low half of each channel, so moving one shifts it by
-  // 1/255. Short forms only have whole-channel digits and move by 17/255.
-  // Alpha stays put: nudging it can blank a glyph.
+  // Nibbles to try, least visible first. Odd indexes are a channel's low half, so
+  // moving one shifts it by 1/255. Alpha is never touched: it can blank a glyph.
   const ORDER = { 3: [2, 1, 0], 4: [2, 1, 0], 6: [5, 3, 1, 4, 2, 0], 8: [5, 3, 1, 4, 2, 0] }[body.length];
   if (!ORDER) return raw;
 
@@ -36,10 +29,8 @@ export function nickSafeColor(hex, prefix = "") {
   return `${m[1] || "#"}${body}`;
 }
 
-// The filter drops punctuation before matching, so consecutive color tags run
-// together and a token can straddle the boundary. Carry the previous tag's tail
-// and check the join, not just each tag alone. TMP takes 3, 4, 6 and 8 digit hex,
-// and art uses the 3-digit form to save bytes, so all four are covered.
+// The filter strips punctuation, so neighboring tags run together and a token can
+// straddle the join. Carry the previous tail and check that, not each tag alone.
 export function sanitizeNicknameColors(code) {
   let tail = "";
   return String(code ?? "").replace(/<#([0-9A-Fa-f]{3,8})>/g, (match, h) => {
