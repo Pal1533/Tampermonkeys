@@ -54,10 +54,10 @@ export function artLineHeightPct(height) {
   return 100;
 }
 
-// One repeated glyph means every cell is the same width, so mspace is wasted.
-// cspace plus a tight line-height shrinks the cell to the ink, which is how a
-// 100-wide piece fits a plate that holds 20 mspace columns.
-// Self-contained: the audit tests eval each of these alone.
+// All one glyph means every cell is the same width, so mspace is wasted. cspace
+// and a tight line-height shrink the cell to the ink, which is how 100 columns
+// fit a plate that only holds 20 mspace ones.
+// Keep self-contained, the audit tests eval each of these on its own.
 export function artUniformGlyph(text) {
   const chars = String(text ?? "")
     .replace(/<[^>]*>/g, "")
@@ -69,9 +69,8 @@ export function artUniformGlyph(text) {
 }
 
 export function artDotPackMetrics(glyph, width, height, incoming = null) {
-  // adv is how far the cursor moves, ink is what the glyph actually paints.
-  // Cell width equal to ink width is what makes cells touch. Matches a
-  // known-good name: '.' at cspace=-.19em is ink .088 minus adv .278.
+  // adv is the cursor step, ink is what gets painted. Cells touch when the width
+  // matches the ink. A name we know works uses '.' at .088 ink minus .278 adv.
   const GLYPH_BOX = {
     ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
     "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
@@ -82,13 +81,12 @@ export function artDotPackMetrics(glyph, width, height, incoming = null) {
     "\u25AA": { adv: 0.5, inkW: 0.45, inkH: 0.45 },
     "\u25CF": { adv: 1, inkW: 0.75, inkH: 0.75 },
   };
-  // Nameplate budget in em at 100%: 20 cols * 0.65em, 7 rows * 0.95em.
+  // What the nameplate fits at 100%: 20 cols of 0.65em, 7 rows of 0.95em.
   const PLATE_W_EM = 13;
   const PLATE_H_EM = 6.65;
 
   const box = GLYPH_BOX[glyph];
   if (!box || !width || !height) return null;
-  // Negative cspace pulls a wide-advance glyph in; zero when ink fills the box.
   const cspace = incoming && incoming.cspace != null
     ? incoming.cspace
     : Math.round((box.inkW - box.adv) * 1000) / 1000;
@@ -261,9 +259,8 @@ export function padArtLastLine(markup, height) {
   return value + "<br>";
 }
 
-// #CCAA55 and #CA5 are the same color, but 6 bytes instead of 9. Art carries
-// thousands of tags, so that is a third more cells under the size limit. Only
-// shrinks when both nibbles of a channel match, so the color never changes.
+// #CCAA55 and #CA5 are the same color, one is 3 bytes shorter. Art has thousands
+// of tags so that adds up. Only shrinks when it can do it without changing color.
 export function shrinkHexTags(code) {
   return String(code ?? "").replace(/<#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})>/g, (match, body) => {
     const pairs = body.match(/../g) || [];
@@ -325,7 +322,7 @@ export function packAsciiArt(text, align) {
     }
     return wrapPackedArt(inner, mspace, lineHeight, size, side);
   }
-  // These get re-emitted below, so drop any that rode in with pasted art.
+  // We re-emit these below, so drop any that came in with pasted art.
   const tagNum = (re) => { const m = value.match(re); return m ? Number(m[1]) : null; };
   const incoming = {
     lineHeight: tagNum(/<line-height=(-?\.?\d*\.?\d+)\s*em>/i),
@@ -348,8 +345,7 @@ export function packAsciiArt(text, align) {
   }
   const uniform = artUniformGlyph(normalized);
   if (uniform) {
-    // Pasted art with its own metrics knows better than the defaults. Keep what
-    // it asked for and only recompute the size that fits the plate.
+    // Pasted art that brought its own metrics knows better than our defaults.
     const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }

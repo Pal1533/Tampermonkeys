@@ -1,7 +1,6 @@
-// Hex digits spell words to the nickname filter: FA6 reads as fag, 8008 as boob.
-// A55 (ass) is left alone on purpose. It hits every warm mid-tone like #CCAA55
-// and was never confirmed as a rejection. Add it to TOKENS if it turns out to be.
-// Self-contained because the audit tests eval this function alone.
+// Hex spells words to the name filter: FA6 is fag, 8008 is boob. A55 is left in
+// on purpose, it hits every warm tone and we never confirmed it gets rejected.
+// Keep self-contained, the audit tests eval this on its own.
 export function nickSafeColor(hex, prefix = "") {
   const raw = String(hex || "");
   const m = raw.match(/^(#?)([0-9A-Fa-f]{3,8})$/);
@@ -9,8 +8,7 @@ export function nickSafeColor(hex, prefix = "") {
   const body = m[2].toUpperCase();
 
   const TOKENS = ["FA6", "B00B", "8008", "1488"];
-  // Nibbles to try, least visible first. Odd indexes are a channel's low half, so
-  // moving one shifts it by 1/255. Alpha is never touched: it can blank a glyph.
+  // Low halves first so the shift stays invisible. Never alpha, that can hide it.
   const ORDER = { 3: [2, 1, 0], 4: [2, 1, 0], 6: [5, 3, 1, 4, 2, 0], 8: [5, 3, 1, 4, 2, 0] }[body.length];
   if (!ORDER) return raw;
 
@@ -29,8 +27,8 @@ export function nickSafeColor(hex, prefix = "") {
   return `${m[1] || "#"}${body}`;
 }
 
-// The filter strips punctuation, so neighboring tags run together and a token can
-// straddle the join. Carry the previous tail and check that, not each tag alone.
+// The filter drops punctuation, so tags run together and a word can land on the
+// join between two of them.
 export function sanitizeNicknameColors(code) {
   let tail = "";
   return String(code ?? "").replace(/<#([0-9A-Fa-f]{3,8})>/g, (match, h) => {

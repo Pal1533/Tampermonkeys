@@ -92,8 +92,8 @@ export function createNameForge(host = {}) {
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
-  // Quantum's frame buffer is 49152 bytes total and the nickname shares it, so
-  // leave headroom. 40k has been applied in-game; the crash was seen at 81k.
+  // Quantum's frame is 49152 bytes and the name shares it, so leave room. 40k
+  // works in game, 81k crashed the client.
   const NICKNAME_BYTE_LIMIT = 48000;
   const NICKNAME_BYTE_WARN = 40000;
   const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
@@ -954,7 +954,7 @@ export function createNameForge(host = {}) {
 
     const previewName = artPreviewText(s.name);
     const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
-    // Mirror what the packer will emit so this shows the real nameplate shape.
+    // Match what the packer emits so this looks like the real nameplate.
     const artGlyph = ascii ? artUniformGlyph(previewName) : null;
     const artStats = artGlyph ? artLineStats(previewName) : null;
     const artMetrics = artGlyph ? artDotPackMetrics(artGlyph, artStats.width, artStats.height) : null;
@@ -1240,8 +1240,7 @@ export function createNameForge(host = {}) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
     code = sanitizeNicknameColors(code);
-    // Overflowing Quantum's frame buffer kills the client mid-match, so refuse
-    // before this reaches the server.
+    // Too big and the client dies mid match, so stop it here.
     const codeBytes = new TextEncoder().encode(code).length;
     if (codeBytes > NICKNAME_BYTE_LIMIT) {
       throw new Error(
@@ -1801,8 +1800,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
 
   const ART_PREVIEW_FONT = 'Arial, Helvetica, "Liberation Sans", sans-serif';
 
-  // Arial paints a much bigger period than the game's font, so assuming ink fills
-  // its cell is what made preview rows bleed into vertical bars.
+  // Arial's period is way bigger than the game's, and assuming it filled the cell
+  // is what smeared the preview rows into vertical bars.
   const _inkCache = new Map();
   function glyphInk(ch, font) {
     const key = ch + '|' + font;
@@ -1823,14 +1822,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return ink;
   }
 
-  // First painted glyph, which is the cell for uniform art.
   function artFirstGlyph(text) {
     const bare = String(text ?? '').replace(/<[^>]*>/g, '').replace(/[\s\u00A0]/g, '');
     return bare ? bare[0] : '.';
   }
 
-  // Pick a font size whose ink fits the cell, plus the letter-spacing that lands
-  // the advance on the pitch. Turns a smear back into discrete cells.
+  // Shrink the font until the ink fits the cell, then space it back out to pitch.
   function artCellStyle(glyph, cellW, cellH) {
     const ink = glyphInk(glyph, ART_PREVIEW_FONT);
     const px = Math.max(1, 0.9 * Math.min(cellW / ink.w, cellH / ink.h));
@@ -1842,15 +1839,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
     root.className = 'rgnf-preview-inner';
     const art = isAsciiArtText(raw);
     const previewPx = Math.max(10, Math.round(18 * (previewZoom || 1)));
-    // TMP applies these to the whole art block, so read them up front. Without it
-    // rows sit a full line apart and the block renders at full size.
+    // TMP applies these to the whole block, so grab them before we draw anything.
     const artTag = re => { const m = raw.match(re); return m ? Number(m[1]) : null; };
     const artSizePct = artTag(/<size=(\d+(?:\.\d+)?)\s*%/i);
     const artLineEm = artTag(/<line-height=(-?\.?\d*\.?\d+)\s*em/i);
     const artCspaceEm = artTag(/<cspace=(-?\.?\d*\.?\d+)\s*em/i);
     const artPx = Math.max(1.5, previewPx * (artSizePct ? artSizePct / 100 : 1));
-    // cspace packs tighter than a monospace cell, so use the game's font or the
-    // columns come out too wide.
+    // cspace goes tighter than a monospace cell, so we need the game's own font.
     const artFont = artCspaceEm != null ? ART_PREVIEW_FONT : 'ui-monospace, Menlo, Consolas, monospace';
     let artCell = null;
     if (art && artCspaceEm != null) {
