@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      31.4
+// @version      31.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -10036,7 +10036,7 @@ function artDotPackMetrics(glyph, width, height, incoming = null) {
   // adv is the cursor step, ink is what gets painted. Cells touch when the width
   // matches the ink. A name we know works uses '.' at .088 ink minus .278 adv.
   const GLYPH_BOX = {
-    ".": { adv: 0.278, inkW: 0.045, inkH: 0.09 },
+    ".": { adv: 0.278, inkW: 0.088, inkH: 0.15 },
     "\u00B7": { adv: 0.278, inkW: 0.11, inkH: 0.11 },
     "\u2022": { adv: 0.35, inkW: 0.24, inkH: 0.24 },
     "#": { adv: 0.556, inkW: 0.5, inkH: 0.55 },
@@ -14878,7 +14878,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
