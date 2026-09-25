@@ -933,6 +933,111 @@ test("opponent streak inference accepts publication and safe deltas", () => {
   assert.equal(inferred.confident, true);
 });
 
+function makeFakeLocalStorage() {
+  const store = new Map();
+  return {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: (k) => { store.delete(k); },
+    get length() { return store.size; },
+    key: (i) => Array.from(store.keys())[i] ?? null,
+  };
+}
+
+function buildStreakSessionHarness() {
+  const localStorage = makeFakeLocalStorage();
+  const streakPrWrites = [];
+  const streakSource = [
+    "loadStreakArchive",
+    "archiveStreak",
+    "loadStreakForAccount",
+    "resetStreak",
+    "saveStreak",
+    "updateStreak",
+    "captureSessionStart",
+  ].map(hudFunctionSource).join("\n\n");
+  const wrapped = `(function () {
+    let streakData = null;
+    let sessionStart = null;
+    let currentMomentumState = "neutral";
+    let clanLoaded = false;
+    let clanLoadedForAccount = null;
+    let myClan = null;
+    const SESSION_IDLE_MS = ${2 * 60 * 60 * 1000};
+
+    ${streakSource}
+
+    return {
+      updateStreak,
+      captureSessionStart,
+      saveStreak,
+      resetStreak,
+      get streakData() { return streakData; },
+      get sessionStart() { return sessionStart; },
+    };
+  })()`;
+  const api = vm.runInNewContext(wrapped, {
+    localStorage,
+    pushError: () => {},
+    maybeWriteStreakPR: (streak, accountId) => streakPrWrites.push({ streak, accountId }),
+    resetAccountRankState: () => {},
+    scheduleClanNoticeCheck: () => {},
+    isVisible: () => false,
+    document: { getElementById: () => null },
+  });
+  return { api, localStorage, streakPrWrites };
+}
+
+function withWinsMatches(id, wins, matches) {
+  return {
+    Id: id,
+    ModesData: { Competitive1v1: { wins, matchesPlayed: matches } },
+    ModesGlicko: {},
+  };
+}
+
+test("win streak survives a session idle-out for the same account", () => {
+  const { api } = buildStreakSessionHarness();
+
+  api.captureSessionStart(withWinsMatches("acct-A", 0, 0));
+  api.updateStreak(withWinsMatches("acct-A", 0, 0));
+  api.updateStreak(withWinsMatches("acct-A", 3, 3)); // 3 wins in a row
+  assert.equal(api.streakData.streak, 3);
+
+  // Simulate the player coming back after >2h idle with no loss in between.
+  const idledOutPayload = withWinsMatches("acct-A", 3, 3);
+  const staleLastSeen = Date.now() - (3 * 60 * 60 * 1000);
+  api.sessionStart.lastSeen = staleLastSeen;
+  api.captureSessionStart(idledOutPayload);
+
+  assert.equal(api.streakData.streak, 3, "idle-out must not reset an in-progress win streak");
+  assert.ok(
+    api.sessionStart.lastSeen > staleLastSeen,
+    "momentum session should still rebuild (drop inherited momentum) on idle-out",
+  );
+});
+
+test("switching accounts loads and later restores each account's own streak", () => {
+  const { api } = buildStreakSessionHarness();
+
+  api.captureSessionStart(withWinsMatches("acct-A", 0, 0));
+  api.updateStreak(withWinsMatches("acct-A", 4, 4)); // account A: 4-win streak
+  assert.equal(api.streakData.streak, 4);
+
+  // Switch to a different account on the same device.
+  api.captureSessionStart(withWinsMatches("acct-B", 0, 0));
+  assert.equal(api.streakData.accountId, "acct-B");
+  assert.equal(api.streakData.streak, 0, "a different account must not inherit account A's streak");
+
+  api.updateStreak(withWinsMatches("acct-B", 0, 1)); // account B: pure loss -> streak -1
+  assert.equal(api.streakData.streak, -1);
+
+  // Switch back to account A: its own streak should reappear, not be lost.
+  api.captureSessionStart(withWinsMatches("acct-A", 4, 4));
+  assert.equal(api.streakData.accountId, "acct-A");
+  assert.equal(api.streakData.streak, 4, "returning to account A must restore its own streak");
+});
+
 test("streak snipe threshold is clamped without a match-end config read", () => {
   assert.equal(streakSnipeMinimum(undefined), 3);
   assert.equal(streakSnipeMinimum({ streakSnipeMin: -8 }), 1);
@@ -1444,10 +1549,12 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const indentArtBody = extractHudFunction("indentArtBody", { artIndentPad });
   const wrapPackedArt = extractHudFunction("wrapPackedArt", { normalizeForgeAlign });
   const artUniformGlyph = extractHudFunction("artUniformGlyph");
+  const artDominantGlyph = extractHudFunction("artDominantGlyph");
   const artDotPackMetrics = extractHudFunction("artDotPackMetrics");
   const wrapPackedDotArt = extractHudFunction("wrapPackedDotArt", { normalizeForgeAlign });
   const packAsciiArt = extractHudFunction("packAsciiArt", {
     artUniformGlyph,
+    artDominantGlyph,
     artDotPackMetrics,
     wrapPackedDotArt,
     preserveForgeNewlines,

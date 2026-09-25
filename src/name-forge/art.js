@@ -68,6 +68,19 @@ export function artUniformGlyph(text) {
   return first;
 }
 
+// Most common painted character. Used when art is not all one glyph but still
+// arrived with its own spacing tags.
+export function artDominantGlyph(text) {
+  const counts = new Map();
+  for (const ch of String(text ?? "").replace(/<[^>]*>/g, "")) {
+    if (!ch.trim()) continue;
+    counts.set(ch, (counts.get(ch) || 0) + 1);
+  }
+  let best = null, top = 0;
+  for (const [ch, n] of counts) if (n > top) { top = n; best = ch; }
+  return best;
+}
+
 export function artDotPackMetrics(glyph, width, height, incoming = null) {
   // adv is the cursor step, ink is what gets painted. Cells touch when the width
   // matches the ink. A name we know works uses '.' at .088 ink minus .278 adv.
@@ -343,10 +356,13 @@ export function packAsciiArt(text, align) {
   if (side !== "left") {
     body = indentArtBody(body, artBlockIndentCols(stats.width, side));
   }
-  const uniform = artUniformGlyph(normalized);
-  if (uniform) {
-    // Pasted art that brought its own metrics knows better than our defaults.
-    const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
+  // Art that brought its own spacing tags keeps them. One stray character used to
+  // drop the whole piece back to mspace, which spreads the dots way out.
+  const sent = incoming.cspace != null && incoming.lineHeight > 0;
+  const glyph = artUniformGlyph(normalized) || (sent ? artDominantGlyph(normalized) : null);
+  if (glyph) {
+    const metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
+      || (sent ? artDotPackMetrics(".", stats.width, stats.height, incoming) : null);
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);

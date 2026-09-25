@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      31.5
+// @version      31.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -2433,6 +2433,9 @@ function clearError() {
 function saveStreak() {
     try { localStorage.setItem("rgHudStreak", JSON.stringify(streakData)); }
     catch (e) { pushError(e, "saveStreak"); }
+    // Keep the per-account archive in sync so switching accounts (and back)
+    // never loses an in-progress streak.
+    if (streakData && streakData.accountId) archiveStreak(streakData);
 }
 
 
@@ -2442,14 +2445,63 @@ function resetStreak(accountId, totalWins, totalMatches) {
 }
 
 
+// ---------- Per-account streak archive ----------
+//
+// streakData only ever holds the currently-active account. When the
+// active account switches, the outgoing account's streak is stashed here
+// so logging back into it later resumes the same streak instead of
+// starting over.
+
+function loadStreakArchive() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem("rgHudStreakArchive") ?? "null");
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (e) {
+        pushError(e, "loadStreakArchive");
+        return {};
+    }
+}
+
+function archiveStreak(entry) {
+    if (!entry || !entry.accountId) return;
+    const archive = loadStreakArchive();
+    archive[entry.accountId] = {
+        streak: Number(entry.streak) || 0,
+        lastWins: entry.lastWins,
+        lastMatches: entry.lastMatches,
+    };
+    try { localStorage.setItem("rgHudStreakArchive", JSON.stringify(archive)); }
+    catch (e) { pushError(e, "archiveStreak"); }
+}
+
+// Makes accountId the active streak, restoring its archived streak count
+// (if any) and rebaselining wins/matches to the account's current totals.
+function loadStreakForAccount(accountId, totalWins, totalMatches) {
+    const archive = loadStreakArchive();
+    const saved = archive[accountId];
+    if (!saved) {
+        resetStreak(accountId, totalWins, totalMatches);
+        return;
+    }
+    streakData = {
+        accountId,
+        streak: Number(saved.streak) || 0,
+        lastWins: totalWins,
+        lastMatches: totalMatches,
+    };
+    saveStreak();
+}
+
+
 function updateStreak(data) {
     const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
     const totalWins = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
     const totalMatches = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
-    // first observation, baseline only
+    // first observation, or captureSessionStart hasn't run yet for this
+    // account — restore its archived streak (if any) as a baseline.
     if (!streakData || streakData.accountId !== data.Id) {
-        resetStreak(data.Id, totalWins, totalMatches);
+        loadStreakForAccount(data.Id, totalWins, totalMatches);
         return;
     }
 
@@ -2609,9 +2661,9 @@ function streakBadge() {
     const pr = bestStreakForAccount(streakData.accountId);
     const prTip = pr > 0 ? `. All-time best: ${pr} wins.` : "";
     if (n > 0) {
-        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak this session${prTip} Click to see records." style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
+        return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${n}-win streak (ends on your next loss)${prTip} Click to see records." style="color:#ff7a00;font-weight:bold;cursor:pointer;">🔥x${n}</span>`;
     }
-    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak this session${prTip} Click to see records." style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
+    return `<span class="rgHasTip rgNoUnderline rgStreakBadge" data-tip="${-n}-loss streak (ends on your next win)${prTip} Click to see records." style="color:#7ec8ff;font-weight:bold;cursor:pointer;">❄️x${-n}</span>`;
 }
 
 
@@ -2709,7 +2761,11 @@ function captureSessionStart(data) {
         return;
     }
 
-    // new session, fresh baseline, drop inherited momentum
+    const accountChanged = !sameAccount;
+
+    // new session, fresh baseline, drop inherited momentum. Momentum
+    // ("on fire" / "flow state") is intentionally session-scoped, so it
+    // resets here on idle-out same as on account change.
     sessionStart = {
         accountId: data.Id,
         startedAt: now,
@@ -2723,16 +2779,20 @@ function captureSessionStart(data) {
     currentMomentumState = "neutral";
     resetAccountRankState();
 
-    // reset streak, don't count pre-session matches. Flush any in-flight
-    // positive run as a PR candidate first — session idle-out shouldn't
-    // silently drop a running win streak.
-    if (streakData && streakData.accountId === data.Id && Number(streakData.streak) > 0) {
-        maybeWriteStreakPR(Number(streakData.streak), data.Id);
+    // Win streaks are account-scoped, not session-scoped: idle-out alone
+    // (same account, away longer than SESSION_IDLE_MS) must not touch the
+    // streak. Only an actual account switch swaps in that account's own
+    // streak — flush the outgoing account's in-flight positive run as a PR
+    // candidate first, so switching away doesn't silently drop it.
+    if (accountChanged) {
+        if (streakData && Number(streakData.streak) > 0) {
+            maybeWriteStreakPR(Number(streakData.streak), streakData.accountId);
+        }
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
+        const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
+        loadStreakForAccount(data.Id, tw, tm);
     }
-    const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
-    const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
-    const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
-    resetStreak(data.Id, tw, tm);
 
     // bust clan cache on account change
     clanLoaded = false;
@@ -10032,6 +10092,19 @@ function artUniformGlyph(text) {
   return first;
 }
 
+// Most common painted character. Used when art is not all one glyph but still
+// arrived with its own spacing tags.
+function artDominantGlyph(text) {
+  const counts = new Map();
+  for (const ch of String(text ?? "").replace(/<[^>]*>/g, "")) {
+    if (!ch.trim()) continue;
+    counts.set(ch, (counts.get(ch) || 0) + 1);
+  }
+  let best = null, top = 0;
+  for (const [ch, n] of counts) if (n > top) { top = n; best = ch; }
+  return best;
+}
+
 function artDotPackMetrics(glyph, width, height, incoming = null) {
   // adv is the cursor step, ink is what gets painted. Cells touch when the width
   // matches the ink. A name we know works uses '.' at .088 ink minus .278 adv.
@@ -10307,10 +10380,13 @@ function packAsciiArt(text, align) {
   if (side !== "left") {
     body = indentArtBody(body, artBlockIndentCols(stats.width, side));
   }
-  const uniform = artUniformGlyph(normalized);
-  if (uniform) {
-    // Pasted art that brought its own metrics knows better than our defaults.
-    const metrics = artDotPackMetrics(uniform, stats.width, stats.height, incoming);
+  // Art that brought its own spacing tags keeps them. One stray character used to
+  // drop the whole piece back to mspace, which spreads the dots way out.
+  const sent = incoming.cspace != null && incoming.lineHeight > 0;
+  const glyph = artUniformGlyph(normalized) || (sent ? artDominantGlyph(normalized) : null);
+  if (glyph) {
+    const metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
+      || (sent ? artDotPackMetrics(".", stats.width, stats.height, incoming) : null);
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);
@@ -14878,12 +14954,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
     // game only gives cumulative totals — diff between updates for per-match.
-    // +ve = win streak, -ve = loss streak. resets on account change / session end.
+    // +ve = win streak, -ve = loss streak. Per-account, persists across idle
+    // time/refreshes/session boundaries — only a real loss (or switching to
+    // a different account) changes it. Other accounts' in-progress streaks
+    // are archived in rgHudStreakArchive and restored on return.
 
     let streakData = null;
     try { streakData = JSON.parse(localStorage.getItem("rgHudStreak") ?? "null"); }

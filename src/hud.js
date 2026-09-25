@@ -245,12 +245,15 @@ export function bootAtlas() {
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------
     // game only gives cumulative totals — diff between updates for per-match.
-    // +ve = win streak, -ve = loss streak. resets on account change / session end.
+    // +ve = win streak, -ve = loss streak. Per-account, persists across idle
+    // time/refreshes/session boundaries — only a real loss (or switching to
+    // a different account) changes it. Other accounts' in-progress streaks
+    // are archived in rgHudStreakArchive and restored on return.
 
     let streakData = null;
     try { streakData = JSON.parse(localStorage.getItem("rgHudStreak") ?? "null"); }
