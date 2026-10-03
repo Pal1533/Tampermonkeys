@@ -1,5 +1,5 @@
-// Hex spells words to the name filter: FA6 is fag, 8008 is boob. A55 is left in
-// on purpose, it hits every warm tone and we never confirmed it gets rejected.
+// Hex spells words to the name filter: FA6 is fag, 8008 is boob, A55 and 455 are
+// ass. A dot-art name full of warm tones got rejected for ass, so it's blocked now.
 // Keep self-contained, the audit tests eval this on its own.
 export function nickSafeColor(hex, prefix = "") {
   const raw = String(hex || "");
@@ -7,7 +7,7 @@ export function nickSafeColor(hex, prefix = "") {
   if (!m) return raw;
   const body = m[2].toUpperCase();
 
-  const TOKENS = ["FA6", "B00B", "8008", "1488"];
+  const TOKENS = ["FA6", "FA9", "B00B", "B008", "800B", "8008", "A55", "455", "1488"];
   // Low halves first so the shift stays invisible. Never alpha, that can hide it.
   const ORDER = { 3: [2, 1, 0], 4: [2, 1, 0], 6: [5, 3, 1, 4, 2, 0], 8: [5, 3, 1, 4, 2, 0] }[body.length];
   if (!ORDER) return raw;

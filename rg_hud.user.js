@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      31.6
+// @version      31.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -171,8 +171,8 @@ function medianPingSample(samples) {
 }
 
 // src/shared/nickname-color.js
-// Hex spells words to the name filter: FA6 is fag, 8008 is boob. A55 is left in
-// on purpose, it hits every warm tone and we never confirmed it gets rejected.
+// Hex spells words to the name filter: FA6 is fag, 8008 is boob, A55 and 455 are
+// ass. A dot-art name full of warm tones got rejected for ass, so it's blocked now.
 // Keep self-contained, the audit tests eval this on its own.
 function nickSafeColor(hex, prefix = "") {
   const raw = String(hex || "");
@@ -180,7 +180,7 @@ function nickSafeColor(hex, prefix = "") {
   if (!m) return raw;
   const body = m[2].toUpperCase();
 
-  const TOKENS = ["FA6", "B00B", "8008", "1488"];
+  const TOKENS = ["FA6", "FA9", "B00B", "B008", "800B", "8008", "A55", "455", "1488"];
   // Low halves first so the shift stays invisible. Never alpha, that can hide it.
   const ORDER = { 3: [2, 1, 0], 4: [2, 1, 0], 6: [5, 3, 1, 4, 2, 0], 8: [5, 3, 1, 4, 2, 0] }[body.length];
   if (!ORDER) return raw;
@@ -10131,7 +10131,22 @@ function artDotPackMetrics(glyph, width, height, incoming = null) {
   const cellW = box.adv + cspace;
   if (cellW <= 0) return null;
   const fit = Math.min(PLATE_W_EM / (width * cellW), PLATE_H_EM / (height * lineHeight));
-  return { cspace, lineHeight, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
+  return { cspace, lineHeight, cellW, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
+}
+
+// Widest row in cells when rows start with a <space=Xem> indent instead of spaces.
+// Keep self-contained, the audit tests eval each of these on its own.
+function artIndentedWidth(lines, cellW) {
+  let width = 0;
+  for (const line of lines) {
+    const text = String(line ?? "");
+    const lead = text.match(/^(?:<[^>]*>)*/)[0];
+    let em = 0;
+    for (const m of lead.matchAll(/<space=(-?\d*\.?\d+)em>/gi)) em += Number(m[1]);
+    const ink = [...text.replace(/<[^>]*>/g, "").replace(/[ \t]+$/g, "")].length;
+    width = Math.max(width, Math.round(em / cellW) + ink);
+  }
+  return width;
 }
 
 function wrapPackedDotArt(body, metrics, align) {
@@ -10223,11 +10238,12 @@ function wrapAsciiMonospace(code) {
 const ART_WIDTH_PAD = "<#00000000>.";
 
 function stripArtWidthPads(line) {
+  // Width pads trail a line. A <space> before the art is an indent, so keep that.
   return String(line ?? "")
     .replace(/<color=#00000000>\.*<\/color>/gi, "")
     .replace(/<#00000000>\./gi, "")
     .replace(/<\/?rgnf-align[^>]*>/gi, "")
-    .replace(/<space=[^>]*>/gi, "")
+    .replace(/<space=[^>]*>(?=(?:\s|<\/[^>]+>)*(?:<br\s*\/?\s*>|\n|$))/gi, "")
     .replace(/\u00A0/g, " ");
 }
 
@@ -10366,7 +10382,7 @@ function packAsciiArt(text, align) {
     cspace: tagNum(/<cspace=(-?\.?\d*\.?\d+)\s*em>/i),
   };
   const normalized = value
-    .replace(/<\/?(?:size|line-height|cspace)(?:=[^>]*)?>/gi, "")
+    .replace(/<\/?(?:size|line-height|cspace|align|rgnf-align)(?:=[^>]*)?>/gi, "")
     .replace(/\r\n/g, "\n")
     .replace(/<br\s*\/?\s*>/gi, "\n");
   const lines = normalized.split("\n");
@@ -10385,8 +10401,17 @@ function packAsciiArt(text, align) {
   const sent = incoming.cspace != null && incoming.lineHeight > 0;
   const glyph = artUniformGlyph(normalized) || (sent ? artDominantGlyph(normalized) : null);
   if (glyph) {
-    const metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
+    let metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
       || (sent ? artDotPackMetrics(".", stats.width, stats.height, incoming) : null);
+    // Indents sent as <space> tags still take up width, so size the plate with them.
+    if (metrics && /<space=/i.test(normalized)) {
+      const width = artIndentedWidth(lines, metrics.cellW);
+      if (width > stats.width) {
+        metrics = artDotPackMetrics(glyph, width, stats.height, incoming)
+          || artDotPackMetrics(".", width, stats.height, incoming)
+          || metrics;
+      }
+    }
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);
@@ -11107,10 +11132,10 @@ function createNameForge(host = {}) {
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
-  // Quantum's frame is 49152 bytes and the name shares it, so leave room. 40k
-  // works in game, 81k crashed the client.
-  const NICKNAME_BYTE_LIMIT = 48000;
-  const NICKNAME_BYTE_WARN = 40000;
+  // The client throws NotSupportedException past 32767 UTF-8 bytes (short.MaxValue),
+  // seen at 35903. 81k used to crash it outright.
+  const NICKNAME_BYTE_LIMIT = 32767;
+  const NICKNAME_BYTE_WARN = 31000;
   const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
   // per-account state, legacy key read once as a fallback on upgrade
@@ -12261,7 +12286,7 @@ function createNameForge(host = {}) {
     if (codeBytes > NICKNAME_BYTE_LIMIT) {
       throw new Error(
         `Nickname is ${codeBytes.toLocaleString()} bytes, over the ${NICKNAME_BYTE_LIMIT.toLocaleString()} `
-        + `byte Quantum frame limit. It would crash the game client. Drop the column count or the color count.`
+        + `byte limit the game client accepts. Drop the column count or the color count.`
       );
     }
     const res = await fetch(API_URL, {
@@ -12997,7 +13022,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<space=([\d.]+)em>/i))) {
         const pad = document.createElement('span');
         pad.style.display = 'inline-block';
-        pad.style.width = m[1] + 'em';
+        // Art lines shrink the font to fit the dot ink, so an em there is not a game em.
+        pad.style.width = artCell ? (Number(m[1]) * artPx).toFixed(3) + 'px' : m[1] + 'em';
         pad.style.height = '1em';
         currentContainer.appendChild(pad);
         i += m[0].length;
@@ -13381,7 +13407,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       charSpan.style.color = codeBytes > NICKNAME_BYTE_LIMIT ? '#ef4444'
         : codeBytes > NICKNAME_BYTE_WARN ? '#f59e0b' : '';
       charSpan.title = codeBytes > NICKNAME_BYTE_WARN
-        ? `Quantum's frame buffer is 49152 bytes. Over ~${NICKNAME_BYTE_LIMIT.toLocaleString()} risks crashing the client.`
+        ? `The game rejects names over ${NICKNAME_BYTE_LIMIT.toLocaleString()} UTF-8 bytes.`
         : '';
       letterSpan.textContent = `${[...state.name].length} letters`;
       refreshArtHint(state.name, code.length);
@@ -14954,7 +14980,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

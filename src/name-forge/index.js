@@ -92,10 +92,10 @@ export function createNameForge(host = {}) {
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
-  // Quantum's frame is 49152 bytes and the name shares it, so leave room. 40k
-  // works in game, 81k crashed the client.
-  const NICKNAME_BYTE_LIMIT = 48000;
-  const NICKNAME_BYTE_WARN = 40000;
+  // The client throws NotSupportedException past 32767 UTF-8 bytes (short.MaxValue),
+  // seen at 35903. 81k used to crash it outright.
+  const NICKNAME_BYTE_LIMIT = 32767;
+  const NICKNAME_BYTE_WARN = 31000;
   const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
   // per-account state, legacy key read once as a fallback on upgrade
@@ -1246,7 +1246,7 @@ export function createNameForge(host = {}) {
     if (codeBytes > NICKNAME_BYTE_LIMIT) {
       throw new Error(
         `Nickname is ${codeBytes.toLocaleString()} bytes, over the ${NICKNAME_BYTE_LIMIT.toLocaleString()} `
-        + `byte Quantum frame limit. It would crash the game client. Drop the column count or the color count.`
+        + `byte limit the game client accepts. Drop the column count or the color count.`
       );
     }
     const res = await fetch(API_URL, {
@@ -1982,7 +1982,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<space=([\d.]+)em>/i))) {
         const pad = document.createElement('span');
         pad.style.display = 'inline-block';
-        pad.style.width = m[1] + 'em';
+        // Art lines shrink the font to fit the dot ink, so an em there is not a game em.
+        pad.style.width = artCell ? (Number(m[1]) * artPx).toFixed(3) + 'px' : m[1] + 'em';
         pad.style.height = '1em';
         currentContainer.appendChild(pad);
         i += m[0].length;
@@ -2366,7 +2367,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       charSpan.style.color = codeBytes > NICKNAME_BYTE_LIMIT ? '#ef4444'
         : codeBytes > NICKNAME_BYTE_WARN ? '#f59e0b' : '';
       charSpan.title = codeBytes > NICKNAME_BYTE_WARN
-        ? `Quantum's frame buffer is 49152 bytes. Over ~${NICKNAME_BYTE_LIMIT.toLocaleString()} risks crashing the client.`
+        ? `The game rejects names over ${NICKNAME_BYTE_LIMIT.toLocaleString()} UTF-8 bytes.`
         : '';
       letterSpan.textContent = `${[...state.name].length} letters`;
       refreshArtHint(state.name, code.length);

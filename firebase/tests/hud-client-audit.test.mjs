@@ -16,6 +16,7 @@ import { sanitizeClanTag as sanitizeClanTagFromModule } from "../../src/clans/ta
 import { escapeHtml as escapeHtmlFromModule } from "../../src/shared/html.js";
 import { hexToRgba as hexToRgbaFromModule } from "../../src/shared/color.js";
 import { cleanName as cleanNameFromModule } from "../../src/identity/names.js";
+import { packAsciiArt as packAsciiArtFromModule } from "../../src/name-forge/art.js";
 import { resolveAtlasFirebaseApp as resolveAtlasFirebaseAppFromModule } from "../../src/firebase/app.js";
 import { truncateForDeny as truncateForDenyFromModule } from "../../src/firebase/deny.js";
 import { parseRosterInitLine as parseRosterInitLineFromModule } from "../../src/leaderboard/cache.js";
@@ -109,6 +110,26 @@ test("Name Forge color sanitizing is a shared module", () => {
     sanitizeNicknameColorsFromModule("<#FFA600>"),
     "<#FFA700>",
   );
+});
+
+test("Name Forge repacks already-packed dot art without doubling the align wrapper", () => {
+  const row = "<#FFF>" + ".".repeat(70);
+  // 200 rows plus the trailing empty one at .09em fits the 6.65em plate at 36%.
+  const packed = "<size=36%><line-height=0.09em><cspace=-0.19em><align=left>"
+    + Array(200).fill(row).join("<br>") + "<br></align>";
+  const repacked = packAsciiArtFromModule(packed, "left");
+  assert.equal((repacked.match(/<align=/g) || []).length, 1);
+  assert.equal((repacked.match(/<\/align>/g) || []).length, 1);
+  assert.equal(new TextEncoder().encode(repacked).length, new TextEncoder().encode(packed).length);
+});
+
+test("Name Forge keeps dot art colors from spelling ass to the nickname filter", () => {
+  const filterView = (code) => code.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+  assert.equal(nickSafeColorFromModule("#A55"), "#A56");
+  // 455 straddles the join between two tags once the filter drops punctuation.
+  const joined = sanitizeNicknameColorsFromModule("<#654>.<#554>.");
+  assert.equal(/455/.test(filterView(joined)), false);
+  assert.equal(joined, "<#654>.<#564>.");
 });
 
 test("clan and popup helpers live in source modules", () => {

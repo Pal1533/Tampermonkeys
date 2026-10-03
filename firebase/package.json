@@ -6,8 +6,9 @@
   "description": "Emulator tests, snapshots, and migration planning for rgleaderboard.",
   "scripts": {
     "test": "npm run test:core && npm run test:contracts",
-    "test:core": "npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache && npm run test:security-log && npm run test:firestore-usage && npm run test:read-stats-snapshot && npm run test:merge-snapshots",
+    "test:core": "npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache && npm run test:security-log && npm run test:firestore-usage && npm run test:read-stats-snapshot && npm run test:merge-snapshots && npm run test:audit-streak-records",
     "test:security-log": "node --test tests/security-log.test.mjs",
+    "test:audit-streak-records": "node --test tests/audit-streak-records.test.mjs",
     "test:merge-snapshots": "node --test tests/merge-match-snapshots.test.mjs",
     "test:leaderboard-cache": "node --test tests/leaderboard-cache.test.mjs",
     "test:firestore-usage": "node --test tests/fetch-firestore-usage.test.mjs",
