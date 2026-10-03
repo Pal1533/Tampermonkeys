@@ -107,22 +107,7 @@ export function artDotPackMetrics(glyph, width, height, incoming = null) {
   const cellW = box.adv + cspace;
   if (cellW <= 0) return null;
   const fit = Math.min(PLATE_W_EM / (width * cellW), PLATE_H_EM / (height * lineHeight));
-  return { cspace, lineHeight, cellW, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
-}
-
-// Widest row in cells when rows start with a <space=Xem> indent instead of spaces.
-// Keep self-contained, the audit tests eval each of these on its own.
-export function artIndentedWidth(lines, cellW) {
-  let width = 0;
-  for (const line of lines) {
-    const text = String(line ?? "");
-    const lead = text.match(/^(?:<[^>]*>)*/)[0];
-    let em = 0;
-    for (const m of lead.matchAll(/<space=(-?\d*\.?\d+)em>/gi)) em += Number(m[1]);
-    const ink = [...text.replace(/<[^>]*>/g, "").replace(/[ \t]+$/g, "")].length;
-    width = Math.max(width, Math.round(em / cellW) + ink);
-  }
-  return width;
+  return { cspace, lineHeight, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
 }
 
 export function wrapPackedDotArt(body, metrics, align) {
@@ -214,12 +199,11 @@ export function wrapAsciiMonospace(code) {
 export const ART_WIDTH_PAD = "<#00000000>.";
 
 export function stripArtWidthPads(line) {
-  // Width pads trail a line. A <space> before the art is an indent, so keep that.
   return String(line ?? "")
     .replace(/<color=#00000000>\.*<\/color>/gi, "")
     .replace(/<#00000000>\./gi, "")
     .replace(/<\/?rgnf-align[^>]*>/gi, "")
-    .replace(/<space=[^>]*>(?=(?:\s|<\/[^>]+>)*(?:<br\s*\/?\s*>|\n|$))/gi, "")
+    .replace(/<space=[^>]*>/gi, "")
     .replace(/\u00A0/g, " ");
 }
 
@@ -377,17 +361,8 @@ export function packAsciiArt(text, align) {
   const sent = incoming.cspace != null && incoming.lineHeight > 0;
   const glyph = artUniformGlyph(normalized) || (sent ? artDominantGlyph(normalized) : null);
   if (glyph) {
-    let metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
+    const metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
       || (sent ? artDotPackMetrics(".", stats.width, stats.height, incoming) : null);
-    // Indents sent as <space> tags still take up width, so size the plate with them.
-    if (metrics && /<space=/i.test(normalized)) {
-      const width = artIndentedWidth(lines, metrics.cellW);
-      if (width > stats.width) {
-        metrics = artDotPackMetrics(glyph, width, stats.height, incoming)
-          || artDotPackMetrics(".", width, stats.height, incoming)
-          || metrics;
-      }
-    }
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);

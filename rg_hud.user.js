@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      31.7
+// @version      31.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -10131,22 +10131,7 @@ function artDotPackMetrics(glyph, width, height, incoming = null) {
   const cellW = box.adv + cspace;
   if (cellW <= 0) return null;
   const fit = Math.min(PLATE_W_EM / (width * cellW), PLATE_H_EM / (height * lineHeight));
-  return { cspace, lineHeight, cellW, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
-}
-
-// Widest row in cells when rows start with a <space=Xem> indent instead of spaces.
-// Keep self-contained, the audit tests eval each of these on its own.
-function artIndentedWidth(lines, cellW) {
-  let width = 0;
-  for (const line of lines) {
-    const text = String(line ?? "");
-    const lead = text.match(/^(?:<[^>]*>)*/)[0];
-    let em = 0;
-    for (const m of lead.matchAll(/<space=(-?\d*\.?\d+)em>/gi)) em += Number(m[1]);
-    const ink = [...text.replace(/<[^>]*>/g, "").replace(/[ \t]+$/g, "")].length;
-    width = Math.max(width, Math.round(em / cellW) + ink);
-  }
-  return width;
+  return { cspace, lineHeight, size: Math.max(5, Math.min(100, Math.floor(fit * 100))) };
 }
 
 function wrapPackedDotArt(body, metrics, align) {
@@ -10238,12 +10223,11 @@ function wrapAsciiMonospace(code) {
 const ART_WIDTH_PAD = "<#00000000>.";
 
 function stripArtWidthPads(line) {
-  // Width pads trail a line. A <space> before the art is an indent, so keep that.
   return String(line ?? "")
     .replace(/<color=#00000000>\.*<\/color>/gi, "")
     .replace(/<#00000000>\./gi, "")
     .replace(/<\/?rgnf-align[^>]*>/gi, "")
-    .replace(/<space=[^>]*>(?=(?:\s|<\/[^>]+>)*(?:<br\s*\/?\s*>|\n|$))/gi, "")
+    .replace(/<space=[^>]*>/gi, "")
     .replace(/\u00A0/g, " ");
 }
 
@@ -10401,17 +10385,8 @@ function packAsciiArt(text, align) {
   const sent = incoming.cspace != null && incoming.lineHeight > 0;
   const glyph = artUniformGlyph(normalized) || (sent ? artDominantGlyph(normalized) : null);
   if (glyph) {
-    let metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
+    const metrics = artDotPackMetrics(glyph, stats.width, stats.height, incoming)
       || (sent ? artDotPackMetrics(".", stats.width, stats.height, incoming) : null);
-    // Indents sent as <space> tags still take up width, so size the plate with them.
-    if (metrics && /<space=/i.test(normalized)) {
-      const width = artIndentedWidth(lines, metrics.cellW);
-      if (width > stats.width) {
-        metrics = artDotPackMetrics(glyph, width, stats.height, incoming)
-          || artDotPackMetrics(".", width, stats.height, incoming)
-          || metrics;
-      }
-    }
     if (metrics) return wrapPackedDotArt(body, metrics, side);
   }
   const size = artFitSizePct(stats.height, stats.width);
@@ -13022,8 +12997,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<space=([\d.]+)em>/i))) {
         const pad = document.createElement('span');
         pad.style.display = 'inline-block';
-        // Art lines shrink the font to fit the dot ink, so an em there is not a game em.
-        pad.style.width = artCell ? (Number(m[1]) * artPx).toFixed(3) + 'px' : m[1] + 'em';
+        pad.style.width = m[1] + 'em';
         pad.style.height = '1em';
         currentContainer.appendChild(pad);
         i += m[0].length;
@@ -14980,7 +14954,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     let pingTrackerLastRtt = null;
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "31.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- Win/loss streak tracking ----------

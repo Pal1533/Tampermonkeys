@@ -1982,8 +1982,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<space=([\d.]+)em>/i))) {
         const pad = document.createElement('span');
         pad.style.display = 'inline-block';
-        // Art lines shrink the font to fit the dot ink, so an em there is not a game em.
-        pad.style.width = artCell ? (Number(m[1]) * artPx).toFixed(3) + 'px' : m[1] + 'em';
+        pad.style.width = m[1] + 'em';
         pad.style.height = '1em';
         currentContainer.appendChild(pad);
         i += m[0].length;
