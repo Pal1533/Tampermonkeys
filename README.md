@@ -36,13 +36,20 @@ You should now see a little Tampermonkey icon (two black circles) in your toolba
 
 ---
 
-## Step 3: Turn on Developer Mode (Chrome and Edge only)
+## Step 3: Turn on Developer Mode and Allow User Scripts (Chrome and Edge only)
 
-Chrome and Edge require an extra step for userscripts to actually work. Skip this step if you're using Firefox.
+Chrome and Edge require two extra settings for userscripts to actually work. Skip this step if you're using Firefox.
+
+**Developer mode**
 
 1. Go to `chrome://extensions` (or `edge://extensions` on Edge) by typing it into your address bar.
 2. Look for a toggle labeled **Developer mode** in the top-right corner of the page.
 3. Turn it **on**.
+
+**Allow User Scripts**
+
+1. Right-click the Tampermonkey icon in your toolbar and click **Manage extension**.
+2. Find the **Allow User Scripts** toggle and turn it **on**.
 
 Don't worry, this doesn't make your browser less safe. It just allows extensions like Tampermonkey to run scripts you install yourself.
 
@@ -51,10 +58,13 @@ Don't worry, this doesn't make your browser less safe. It just allows extensions
 ## Step 4: Install ATLAS
 
 1. Click this link: **[Install ATLAS](https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js)**
-2. Tampermonkey will open a new tab showing the script's code and an **Install** button.
-3. Click **Install**.
+2. Tampermonkey opens a new tab showing the script's details and an **Install** button. Click **Install**.
+   - If you already have ATLAS, the button says **Reinstall** instead. That's fine, click it.
+3. Nothing gets downloaded to your computer and nothing visible happens after you click. That's normal. The tab may close or send you back to where you were.
 
-That's it, the script is now installed.
+**Check that it installed:** click the Tampermonkey icon in your toolbar. You should see **Enabled** with **ATLAS** listed under it and its toggle switched on (green). Your browser's Downloads folder will stay empty, ATLAS lives inside Tampermonkey.
+
+![Tampermonkey menu showing ATLAS enabled](atlas/tampermonkey-menu.png)
 
 ---
 
@@ -113,15 +123,17 @@ If you don't see the box at all:
 
 ## Step 8: Get on the allowlist (required for the board and clans)
 
-The leaderboard and clans are invite-only. Installing ATLAS is not enough. JesusDied4U has to add your Firebase id before you can sync stats or use clans.
+The leaderboard and clans are invite-only. Installing ATLAS is not enough. RIS3N has to add your Firebase id before you can sync stats or use clans.
 
 1. Go to [rocketgoal.io](https://rocketgoal.io) and log in so ATLAS is showing your stats.
 2. Click the **⚙** settings button on the ATLAS box.
 3. Find the **Firebase id** row. Wait until it shows a long id instead of `signing in…`.
-4. Click **Copy ids**. It puts both ids on the clipboard as:
+4. Click **Copy ids** (shown below). It puts both ids on the clipboard as:
 
        Firebase ID: …
        Device ID: …
+
+   ![Firebase id and Device id rows with the Copy ids button](atlas/copy-ids.png)
 
 5. DM **he_is_ris3n** on Discord and paste that. Ask to be added to the allowlist. Do not post your ids in the [Championship Discord](https://discord.gg/MDz7hsrh9m) or any public channel.
 
