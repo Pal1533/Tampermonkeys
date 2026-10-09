@@ -123,7 +123,7 @@ The leaderboard and clans are invite-only. Installing ATLAS is not enough. Jesus
        Firebase ID: …
        Device ID: …
 
-5. DM **jesus_died_4u** on Discord and paste that. Ask to be added to the allowlist. Do not post your ids in the [Championship Discord](https://discord.gg/MDz7hsrh9m) or any public channel.
+5. DM **he_is_ris3n** on Discord and paste that. Ask to be added to the allowlist. Do not post your ids in the [Championship Discord](https://discord.gg/MDz7hsrh9m) or any public channel.
 
 If the Firebase id still says `signing in…`, wait a few seconds, or close and reopen settings. Do not send a screenshot of someone else's id, and do not reuse an id from an old install after a full cache wipe. That mints a new Firebase id and you would need to be added again.
 
