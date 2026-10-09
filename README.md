@@ -141,6 +141,21 @@ If the Firebase id still says `signing in…`, wait a few seconds, or close and 
 
 ---
 
+## Changing your name
+
+ATLAS has two separate name settings, and they do different things:
+
+![ATLAS box with the Name Forge palette button (1) and Rename button (2) marked](atlas/hud-buttons.png)
+
+1. **🎨 Name Forge** (palette button, top of the box): changes the name other players see **in game**, with colors, gradients and emoji.
+2. **✏️ Rename** (bottom of the box): changes your name on the **leaderboard only**. It does not change your in-game name.
+
+If you want a new name in game, use Name Forge (or press **Alt+N**). Inside it, the live preview (1) shows how your name will look, and you type your name in the **Name** box (2):
+
+![Name Forge with the live preview (1) and Name box (2) marked](atlas/name-forge.png)
+
+---
+
 ## Found a bug or have a suggestion?
 
 [Open an issue](https://github.com/Pal1533/Tampermonkeys/issues/new/choose) or ping Pal / JesusDied4U in the [Championship Discord](https://discord.gg/MDz7hsrh9m).
